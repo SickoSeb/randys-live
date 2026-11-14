@@ -434,7 +434,7 @@ a{color:var(--bl)}
     display:flex;flex-direction:column;text-align:left;transition:.13s;padding:0;position:relative}
 .pk:hover{border-color:var(--rot);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.35)}
 .pk:active{transform:translateY(0)}
-.pk .pkBild{width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--bg3);display:block}
+.pk .pkBild{width:100%;aspect-ratio:1/1;object-fit:cover;object-position:center;background:var(--bg3);display:block}
 .pk .pkText{padding:10px 12px 12px;display:flex;flex-direction:column;gap:3px;flex:1}
 .pk .pkName{font-weight:800;font-size:15px;line-height:1.25}
 .pk .pkBeschr{font-size:11.5px;color:var(--tx3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -1190,6 +1190,7 @@ button.b.p .ic,button.b.gr .ic,button.b.ge .ic{opacity:1}
 
 </style>
 <script src="supabase.js"></script>
+<style>.pkPreisMarke,.pk .pkPreis{display:none !important}</style>
 </head>
 <body data-app="kasse">
 <div id="app"></div>
@@ -9273,7 +9274,7 @@ function myoDialog(groesse, dann) {
   }
   male();
   dialog({
-    titel: 'Eigene Pizza', klasse: 'breit', inhalt: inn,
+    titel: 'Make your own', klasse: 'breit', inhalt: inn,
     knoepfe: [{ text: 'Abbrechen' }, {
       text: 'In den Warenkorb', art: 'p', tun: function () {
         var p = neuePosition('MYO', wahl);
@@ -12962,14 +12963,14 @@ function warenListe(liste, b) {
   if (Kasse.gruppe === 'ABO') { aboListe(liste, b); return; }
 
   if (Kasse.gruppe === 'MYO') {
-    liste.appendChild(el('div', { class: 'untertitel', text: 'Eigene Pizza zusammenstellen' }));
+    liste.appendChild(el('div', { class: 'untertitel', text: 'Make your own zusammenstellen' }));
     var mr = el('div', { class: 'pkraster' });
     GROESSEN.forEach(function (g) {
       mr.appendChild(el('button', { class: 'pk', onclick: function () { myoDialog(g.c, function (p) { korbHinzu(b, p, neuMalen); }); } }, [
-        kasseBild({ id: 'MYO' + g.c, name: 'Eigene Pizza ' + g.t, art: 'pizza' }, { class: 'pkBild', ersatz: platzhalterPizza({ id: 'MYO' + g.c, name: 'Eigene', basis: 'tomate', belaege: ['kaese'] }) }),
+        kasseBild({ id: 'MYO' + g.c, name: 'Make your own ' + g.t, art: 'pizza' }, { class: 'pkBild', ersatz: platzhalterPizza({ id: 'MYO' + g.c, name: 'Eigene', basis: 'tomate', belaege: ['kaese'] }) }),
         el('span', { class: 'pkPreisMarke', text: 'ab ' + eur(MYO.teig[g.c]) }),
         el('div', { class: 'pkText' }, [
-          el('div', { class: 'pkName', text: 'Eigene Pizza ' + g.t }),
+          el('div', { class: 'pkName', text: 'Make your own ' + g.t }),
           el('div', { class: 'pkBeschr', text: 'Teig, Basis und Beläge frei wählen' })
         ])
       ]));
@@ -13330,7 +13331,7 @@ function stornoDialog(b) {
 var KASSE_FLYER = ['Pizza', 'HALB', 'MYO', 'Menüs', 'MITTAG', 'Salate', 'Minis', 'Dips', 'Getränke', 'Snacks', 'ABO'];
 var KASSE_EXTRA = {
   HALB: { t: 'Half & Half', sym: 'pizza' },
-  MYO: { t: 'Eigene Pizza', sym: 'plus' },
+  MYO: { t: 'Make your own', sym: 'plus' },
   MITTAG: { t: 'Mittagsmenü', sym: 'uhr' },
   ABO: { t: 'Team-Abo', sym: 'kalender' }
 };

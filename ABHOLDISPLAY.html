@@ -434,7 +434,7 @@ a{color:var(--bl)}
     display:flex;flex-direction:column;text-align:left;transition:.13s;padding:0;position:relative}
 .pk:hover{border-color:var(--rot);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.35)}
 .pk:active{transform:translateY(0)}
-.pk .pkBild{width:100%;aspect-ratio:4/3;object-fit:cover;background:var(--bg3);display:block}
+.pk .pkBild{width:100%;aspect-ratio:1/1;object-fit:cover;object-position:center;background:var(--bg3);display:block}
 .pk .pkText{padding:10px 12px 12px;display:flex;flex-direction:column;gap:3px;flex:1}
 .pk .pkName{font-weight:800;font-size:15px;line-height:1.25}
 .pk .pkBeschr{font-size:11.5px;color:var(--tx3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -9197,7 +9197,7 @@ function myoDialog(groesse, dann) {
   }
   male();
   dialog({
-    titel: 'Eigene Pizza', klasse: 'breit', inhalt: inn,
+    titel: 'Make your own', klasse: 'breit', inhalt: inn,
     knoepfe: [{ text: 'Abbrechen' }, {
       text: 'In den Warenkorb', art: 'p', tun: function () {
         var p = neuePosition('MYO', wahl);
