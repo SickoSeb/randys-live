@@ -12836,7 +12836,7 @@ appStart({ malen: ausgabeMalen, takt: 5, beiTakt: qkUhrStellen });
   function min(s) { var t = String(s || '').split(':'); return (+t[0] || 0) * 60 + (+t[1] || 0); }
   function an() {
     var z = (typeof MG !== 'undefined' && MG.db && MG.db.einstellungen && MG.db.einstellungen.anzeigeZeiten) || VORGABE;
-    if (z.immer) return true;
+    if (z.immer && (!z.immerBis || Date.now() < Date.parse(z.immerBis))) return true; /* immerBis: Testfreigabe endet von selbst */
     var d = new Date(), tag = d.getDay(), jetzt = d.getHours() * 60 + d.getMinutes();
     var dm = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
     if ((z.ruhetage || VORGABE.ruhetage).indexOf(dm) >= 0) return false;
