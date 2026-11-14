@@ -1775,7 +1775,7 @@ var GROESSEN = [
   { c: '32', t: '32 cm', f: 1.55, karton: 'vp_k32', backzeit: 360, belegzeit: 115 }
 ];
 var TEIGARTEN = [
-  { c: 'std', t: 'Standard' }, { c: 'pan', t: 'PAN' }, { c: 'nap', t: 'Napoli' }, { c: 'hp', t: 'High Protein' }
+  { c: 'std', t: 'Standard' }   /* nur ein Teig: die Auswahl wird nirgends angezeigt */
 ];
 var STATIONEN = {
   vorb: { t: 'Vorbereitung', sym: 'salat' },
@@ -1813,8 +1813,6 @@ function zutatenStamm() {
     z('Z100', 'Teigling 20 cm', 'Teig', 'Stk', 22.50, 60, 180, 60, 300, 'L1', 'TK 1', 'tk', 90),
     z('Z101', 'Teigling 26 cm', 'Teig', 'Stk', 31.20, 60, 240, 90, 420, 'L1', 'TK 1', 'tk', 90),
     z('Z102', 'Teigling 32 cm', 'Teig', 'Stk', 42.00, 60, 120, 40, 240, 'L1', 'TK 1', 'tk', 90),
-    z('Z103', 'Teigling PAN 26 cm', 'Teig', 'Stk', 36.00, 60, 60, 20, 120, 'L1', 'TK 1', 'tk', 90),
-    z('Z104', 'Teigling High Protein 26 cm', 'Teig', 'Stk', 44.40, 60, 40, 15, 90, 'L1', 'TK 1', 'tk', 90),
     z('Z105', 'Pizzabrötchen-Rohling', 'Teig', 'Stk', 18.00, 120, 420, 144, 720, 'L1', 'TK 1', 'tk', 90),
     // Saucen / Basis
     z('Z200', 'Tomatensauce', 'Sauce', 'g', 8.90, 4200, 12600, 4200, 25200, 'L1', 'Trocken A', 'kuehl', 14),
@@ -5066,7 +5064,7 @@ var AKADEMIE = [
     k: 'karte', titel: 'Die Karte kennen', noetig: 4,
     fragen: [
       { f: 'Welche Größen gibt es bei jeder Pizza?', a: ['20, 26 und 32 cm', '24 und 30 cm', 'nur 26 cm', '20 und 40 cm'], r: 0 },
-      { f: 'Welche Teigsorten bieten wir an?', a: ['Standard, PAN, Napoli, High Protein', 'nur Standard', 'Dünn und dick', 'Standard und Vollkorn'], r: 0 },
+      { f: 'Welche Teigsorten bieten wir an?', a: ['Nur einen Standardteig', 'Standard und PAN', 'Dünn und dick', 'Standard und Vollkorn'], r: 0 },
       { f: 'Wie lange backt eine Pizza bei uns?', a: ['5:30', '3:00', '8:00', '12:00'], r: 0 },
       { f: 'Wie viel Zeit ist je Pizza fürs Belegen vorgesehen?', a: ['2 Minuten', '30 Sekunden', '5 Minuten', '10 Minuten'], r: 0 },
       { f: 'Nach wie vielen Minuten soll eine Pizza abholbereit sein?', a: ['10 Minuten', '20 Minuten', '5 Minuten', '30 Minuten'], r: 0 }
@@ -9004,12 +9002,14 @@ function pizzaDialog(a, dann) {
     });
     inn.appendChild(gz);
 
+    if (TEIGARTEN.length > 1) {
     inn.appendChild(abschnitt('Teig'));
     var tz = el('div', { class: 'kfChips' });
     TEIGARTEN.forEach(function (t) {
       tz.appendChild(el('span', { class: 'chip' + (wahl.teig === t.c ? ' an' : ''), text: t.t, onclick: function () { wahl.teig = t.c; male(); } }));
     });
     inn.appendChild(tz);
+    }
 
     var eigene = (a.belaege || []).filter(function (v, i, arr) { return arr.indexOf(v) === i; });
     if (eigene.length) {
@@ -9172,8 +9172,10 @@ function myoDialog(groesse, dann) {
       }, [el('b', { text: g.t }), el('span', { text: 'ab ' + eur(MYO.teig[g.c]) })]));
     });
     inn.appendChild(gz);
+    if (TEIGARTEN.length > 1) {
     inn.appendChild(abschnitt('Teig'));
     inn.appendChild(chips(TEIGARTEN.map(function (t) { return { k: t.c, t: t.t }; }), 'teig', false));
+    }
     inn.appendChild(abschnitt('Grundsauce  (' + eur(MYO.basisPreis) + ')'));
     inn.appendChild(chips(MYO.basen, 'basis', false));
     inn.appendChild(abschnitt('Zweite Sauce dazu  (' + eur(MYO.zweitPreis) + ', optional)'));
@@ -9856,6 +9858,7 @@ function asGroesse(raum, a, wahl, male) {
   });
   raum.appendChild(g);
 
+  if (TEIGARTEN.length > 1) {
   raum.appendChild(el('div', { class: 'asFrage', text: 'Teig' }));
   var t = el('div', { class: 'asKacheln' });
   TEIGARTEN.forEach(function (x) {
@@ -9865,6 +9868,7 @@ function asGroesse(raum, a, wahl, male) {
     }, [el('span', { class: 'kTitel', text: x.t })]));
   });
   raum.appendChild(t);
+  }
 }
 
 /* ---------- Schritt 2: Belag ---------- */
