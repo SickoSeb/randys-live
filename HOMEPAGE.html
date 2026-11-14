@@ -2111,9 +2111,8 @@ var MYO = {
   extras: [
     { k: 'kaeseExtra', t: 'Extra Käse', z: 'Z300', g: 45, p: 1.50 }, { k: 'goudaExtra', t: 'Extra Gouda', z: 'Z301', g: 45, p: 1.50 },
     { k: 'cheddarExtra', t: 'Extra Cheddar', z: 'Z302', g: 40, p: 1.50 }, { k: 'fetaExtra', t: 'Extra Feta', z: 'Z303', g: 45, p: 1.50 },
-    { k: 'pesto', t: 'Petersilienkruste', z: 'Z211', g: 25, p: 1.90 },
-    { k: 'chilimayo', t: 'Topping Chili-Mayo', z: 'Z206', g: 25, p: 1.90 }, { k: 'bbqTopping', t: 'Topping BBQ', z: 'Z202', g: 25, p: 1.90 },
-    { k: 'american', t: 'Topping American', z: 'Z208', g: 25, p: 1.90 }, { k: 'sourcream', t: 'Topping Sour Cream', z: 'Z207', g: 25, p: 1.90 },
+    { k: 'pesto', t: 'Petersilien-Pesto obendrauf', z: 'Z211', g: 25, p: 1.90 },
+    { k: 'chilimayo', t: 'Chili-Mayo obendrauf', z: 'Z206', g: 25, p: 1.90 }, { k: 'bbqTopping', t: 'BBQ obendrauf', z: 'Z202', g: 25, p: 1.90 },
     { k: 'knoblauchkruste', t: 'Knoblauchkruste', z: 'Z514', g: 12, aus: true }, { k: 'knoblauch', t: 'Knoblauch', z: 'Z514', g: 10, aus: true }
   ],
   gewuerze: [{ k: 'pizzagewuerz', t: 'Pizzagewürz', z: 'Z515', g: 3 }, { k: 'roestzwiebel', t: 'Röstzwiebeln', z: 'Z513', g: 15 }]
@@ -9233,7 +9232,7 @@ function myoDialog(groesse, dann) {
     inn.appendChild(chips(MYO.top1.map(function (k) { return { k: k, t: (belagVon(k) || {}).t || k }; }), 'belaege', true));
     inn.appendChild(abschnitt('Käse & Gemüse  (' + eur(MYO.top2Preis[wahl.groesse]) + ' je Belag)'));
     inn.appendChild(chips(MYO.top2.map(function (k) { return { k: k, t: (belagVon(k) || {}).t || k }; }), 'belaege', true));
-    inn.appendChild(abschnitt('Zum Schluss noch drauf'));
+    inn.appendChild(abschnitt('Obendrauf, nach dem Backen'));
     inn.appendChild(chips(extrasAngebot().map(function (e) { return { k: e.k, t: e.t + '  ' + eur(extraPreisVon(e.k)) }; }), 'extras', true));
     inn.appendChild(abschnitt('Gewürze  (gratis)'));
     inn.appendChild(chips(MYO.gewuerze.map(function (e) { return { k: e.k, t: e.t }; }), 'gewuerze', true));
@@ -9982,7 +9981,7 @@ function asDip(raum, a, wahl, kand, male) {
 
 /* ---------- Schritt: Dazu — Soßen und Gratis-Toppings ---------- */
 function asDazu(raum, a, wahl, kand, male) {
-  raum.appendChild(el('div', { class: 'asFrage', text: 'Soße dazu?' }));
+  raum.appendChild(el('div', { class: 'asFrage', text: 'Dips dazu?' }));
   var s = el('div', { class: 'asKacheln' });
   kand.dips.forEach(function (x) {
     var n = wahl.dips.filter(function (id) { return id === x.id; }).length;
