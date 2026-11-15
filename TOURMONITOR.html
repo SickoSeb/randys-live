@@ -8886,18 +8886,25 @@ function pinFeld(o) {
   var titel = el('div', { class: 'pintitel', text: o.titel || 'Anmelden' });
   var punkte = el('div', { class: 'pinpunkte' });
   var hinweis = el('div', { class: 'pinhinweis', text: o.text || 'PIN eingeben' });
+  var warte = null;   /* PINs haben 4 bis 6 Stellen: ab der 4. Stelle wird geprueft, laengere PINs bekommen kurz Zeit */
   function male() {
     leeren(punkte);
-    for (var i = 0; i < 4; i++) punkte.appendChild(el('span', { class: 'pinpunkt' + (i < pin.length ? ' voll' : '') }));
+    for (var i = 0; i < Math.max(4, pin.length); i++) punkte.appendChild(el('span', { class: 'pinpunkt' + (i < pin.length ? ' voll' : '') }));
   }
   function taste(t) {
+    if (warte) { clearTimeout(warte); warte = null; }
     if (t === '') { pin = pin.slice(0, -1); male(); return; }
     if (t === 'C') { pin = ''; male(); return; }
-    if (pin.length >= 4) return;
+    if (pin.length >= 6) return;
     pin += t; male();
-    if (pin.length === 4) {
+    if (pin.length >= 4) {
+      var m0 = anmeldenMitPin(pin);
+      if (m0) { fehlversuche = 0; pin = ''; o.dann(m0); return; }
+      if (pin.length < 6) { warte = setTimeout(function () { warte = null; taste('!'); }, 1500); return; }
+    }
+    if (pin.length >= 4) {
       setTimeout(function () {
-        var m = anmeldenMitPin(pin);
+        var m = pin === '!' ? null : anmeldenMitPin(pin.replace(/!$/, ''));
         if (m) { fehlversuche = 0; o.dann(m); }
         else {
           fehlversuche++;
