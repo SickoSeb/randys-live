@@ -13790,5 +13790,47 @@ function schwundErinnern() {
 })();
 
 </script>
+<!-- MG_ANSTUPS --><script>
+/* ============================================================
+   MASTERS GASTRO — Bildschirme anstupsen (15.11.2026)
+   Ein Befehl im Bereich „befehle“ (mg_bereich) geht per Realtime
+   an alle Geräte. Keine Dauerabfrage. Anzeigen (Menütafel, Küche,
+   Abholdisplay, Tourwand) laden sofort neu. Geräte, an denen gerade
+   jemand arbeitet (Kasse, Kiosk, Team-App, Backoffice), zeigen
+   einen Knopf „Neue Fassung laden“, damit nichts verloren geht.
+   Auslösen: bildschirmeAnstupsen() oder per SQL vom Betreiber.
+   ============================================================ */
+var Anstups = { nr: null };
+function anstupsenPruefen() {
+  if (!MG.db || !MG.app) return;
+  var b = MG.db.befehle || {};
+  var nr = Number(b.nr || 0);
+  if (Anstups.nr === null) { Anstups.nr = nr; return; }
+  if (nr <= Anstups.nr) return;
+  Anstups.nr = nr;
+  if (b.ziel && b.ziel !== 'alle' && String(b.ziel).split(',').indexOf(MG.app.k) < 0) return;
+  var arbeitsgeraet = ['kasse', 'kiosk', 'shop', 'telefon', 'team', 'backoffice', 'homepage'].indexOf(MG.app.k) >= 0;
+  if (!arbeitsgeraet) { setTimeout(function () { location.reload(); }, 300 + Math.random() * 3000); return; }
+  if (document.getElementById('mgAnstups')) return;
+  document.body.appendChild(el('button', {
+    id: 'mgAnstups', type: 'button', text: 'Neue Fassung bereit. Tippen zum Laden',
+    onclick: function () { location.reload(); },
+    style: { position: 'fixed', right: '10px', bottom: '10px', zIndex: '960', padding: '10px 16px', borderRadius: '999px', border: '0',
+      background: '#1f2937', color: '#fff', fontWeight: '700', boxShadow: '0 4px 14px rgba(0,0,0,.35)', cursor: 'pointer' }
+  }));
+}
+function bildschirmeAnstupsen(ziel) {
+  var b = MG.db.befehle || {};
+  MG.db.befehle = { nr: Number(b.nr || 0) + 1, ziel: ziel || 'alle', zeit: jetzt(), von: MG.ich ? MG.ich.name : (MG.app && MG.app.titel) || '' };
+  Anstups.nr = MG.db.befehle.nr;
+  sichern();
+}
+(function () {
+  if (typeof beiFremdaenderung === 'function') beiFremdaenderung(function () { anstupsenPruefen(); });
+  /* Grundstand merken, sobald der Bestand da ist (nur lokal, kein Netz) */
+  var t = setInterval(function () { if (MG.db) { anstupsenPruefen(); clearInterval(t); } }, 1000);
+})();
+
+</script>
 </body>
 </html>
