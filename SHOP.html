@@ -14139,5 +14139,140 @@ if (typeof KASSE_FOTOS !== 'undefined' && typeof bildFuer === 'function' && type
   hatFoto = function (a) { return !!(a && KASSE_FOTOS[a.id]) || hatFotoKern2(a); };
 }
 </script>
+
+
+<!-- MG_SHOP_BETRIEB --><script>
+/* ============================================================
+   MASTERS GASTRO — Shop im Betrieb (15.11.2026)
+   Jede Shop-Bestellung geht über die Bestellannahme auf dem Server
+   (Edge Function bestellen): Server prüft Preise und Liefergebiet,
+   rechnet die ehrliche Zeit aus der Ofenauslastung, vergibt Bon- und
+   Abholnummer und legt die Bestellung für Küche, Abholdisplay und
+   Dispatch an. Online bezahlen: Stripe Checkout über die Edge Function
+   zahlung; die Bestellung geht erst bezahlt an die Küche.
+   ============================================================ */
+(function () {
+  if (typeof MG_BETRIEB === 'undefined' || !MG_BETRIEB || !MG_BETRIEB.url) return;
+  var FN = String(MG_BETRIEB.url).replace(/\/$/, '') + '/functions/v1/';
+
+  function kopf() { return { 'Content-Type': 'application/json' }; }
+  function antwortLesen(r) {
+    return r.json().catch(function () { return null; }).then(function (a) {
+      if (!a || a.ok === false) throw new Error((a && (a.fehler || a.text || a.frage)) || 'Keine Antwort vom Server');
+      return a;
+    });
+  }
+  function senden(weg, daten) { return fetch(FN + weg, { method: 'POST', headers: kopf(), body: JSON.stringify(daten) }).then(antwortLesen); }
+  function holen(weg) { return fetch(FN + weg).then(antwortLesen); }
+
+  function serverKopie(b) {
+    var k = JSON.parse(JSON.stringify(b));
+    delete k._server;
+    return k;
+  }
+  function serverUebernehmen(b, a) {
+    b._server = { nr: a.nr, tagesNr: a.tagesNr, zugesagt: a.zugesagt, fertigAb: a.fertigAb, status: a.status, schluessel: a.schluessel };
+    b.nr = a.nr; b.tagesNr = a.tagesNr; b.zugesagt = a.zugesagt; b.fertigAb = a.fertigAb;
+  }
+
+  /* Zahlarten: Karte, Apple Pay, Google Pay über Stripe; bar bei Abholung oder an der Tür */
+  for (var i = SHOP_ZAHLARTEN.length - 1; i >= 0; i--) if (SHOP_ZAHLARTEN[i].k === 'paypal') SHOP_ZAHLARTEN.splice(i, 1);
+  SHOP_ZAHLARTEN.forEach(function (a) {
+    if (a.k === 'bar') { a.t = 'Bar bei Abholung oder an der Tür (bitte passend)'; a.nurAbholung = false; }
+  });
+
+  /* Bezahlweg ist die eigene Edge Function, nicht mehr das Apps Script */
+  zahlWeg = function () { return FN + 'zahlung'; };
+
+  zahlungOnline = function (b, anbieter) {
+    var hier = location.origin + location.pathname;
+    rechne(b);
+    b.id = id('b');           // jeder Versuch eine eigene Bestellung; ein abgebrochener Entwurf verfällt
+    return senden('bestellen/anlegen', { quelle: 'shop', zahlart: 'online', b: serverKopie(b) }).then(function (a) {
+      serverUebernehmen(b, a);
+      return senden('zahlung/start', { bestellung: b.id, filiale: MG_BETRIEB.filiale, rueck: hier + '?zahlung=stripe', abbruch: hier + '?zahlung=abgebrochen' });
+    }).then(function (z) {
+      b.zahlung = b.zahlung || {};
+      b.zahlung.art = 'online'; b.zahlung.anbieter = 'stripe'; b.zahlung.sitzung = z.id; b.zahlung.bezahlt = false; b.zahlung.betrag = z.betrag_cent / 100;
+      return { id: z.id, url: z.url };
+    });
+  };
+
+  zahlungPruefenOnline = function (anbieter, sitzung) {
+    return holen('zahlung/pruefen?id=' + encodeURIComponent(sitzung)).then(function (a) {
+      return { bezahlt: !!a.bezahlt, bestellung: a.bestellung, betragCent: Number(a.betragCent || 0), status: a.status, referenz: a.referenz || '', anbieter: 'stripe' };
+    });
+  };
+
+  function fertigZeigen(b, o, z) {
+    var a = b._server || {};
+    b.status = a.status === 'entwurf' ? 'neu' : (a.status || 'neu');
+    b.zahlung = b.zahlung || {};
+    b.zahlung.art = o.zahlungsart === 'bar' ? 'bar' : 'online';
+    b.zahlung.bezahlt = o.zahlungsart !== 'bar' && !!o.bezahlt;
+    b.zahlung.betrag = b.summe.zuZahlen;
+    if (z) {
+      b.zahlung.anbieter = z.anbieter || '';
+      b.zahlung.referenz = z.referenz || '';
+      if (z.sitzung) b.zahlung.sitzung = z.sitzung;
+    }
+    b.schluessel = a.schluessel || null;
+    if (!MG.db.bestellungen.some(function (x) { return x.id === b.id; })) MG.db.bestellungen.push(b);
+    try { sichern(); } catch (e) { }
+    Shop.letzte = b.nr;
+    Shop.offen = null;
+    Shop.schritt = 'fertig';
+    shopKorbNeu();
+    shopMerken();
+    neuMalen();
+    try { window.scrollTo(0, 0); } catch (e) { }
+    return true;
+  }
+
+  var sendetGerade = false;
+  shopAbschliessen = function (b, o, z) {
+    o = o || {};
+    if (b._server && o.zahlungsart !== 'bar') return fertigZeigen(b, o, z);   // online: liegt schon auf dem Server, ist bezahlt
+    if (sendetGerade) return false;
+    rechne(b);
+    var grund = shopVorpruefung(b);
+    if (grund) { melde(grund, 'rot'); return false; }
+    sendetGerade = true;
+    melde('Bestellung wird gesendet …');
+    b.id = id('b');
+    senden('bestellen/anlegen', { quelle: 'shop', zahlart: 'bar', b: serverKopie(b) }).then(function (a) {
+      sendetGerade = false;
+      serverUebernehmen(b, a);
+      fertigZeigen(b, o, z);
+    }).catch(function (e) {
+      sendetGerade = false;
+      melde('Bestellung nicht angenommen: ' + e.message + ' Bitte ruf uns an: ' + MG.db.betrieb.telefon, 'rot');
+    });
+    return true;
+  };
+
+  /* Ehrliche Zeit vom Server statt der Schätzung auf dem Handy */
+  var kasseAlt = shopKasse;
+  shopKasse = function (host, b) {
+    kasseAlt(host, b);
+    var kpi = host.querySelector('.kpi.bl');
+    if (!kpi) return;
+    var wert = kpi.querySelector('.wert'), zus = kpi.querySelector('.zus');
+    var pizzen = 0;
+    (b.positionen || []).forEach(function (p) { if (['pizza', 'myo', 'mini'].indexOf(p.art) >= 0) pizzen += Number(p.menge || 1); });
+    if (zus) zus.textContent = 'Wird aus der aktuellen Auslastung von Küche und Ofen berechnet …';
+    senden('bestellen/zeit', { art: b.art, pizzen: pizzen, ort: (b.kundeDaten && b.kundeDaten.ort) || '' }).then(function (a) {
+      if (wert) wert.textContent = a.uhr;
+      var fuss = host.querySelector('.shopKorbFuss .pill.bl');
+      if (fuss && !b.wunschzeit) fuss.textContent = (b.art === 'lieferung' ? 'bei dir ca. ' : 'fertig ca. ') + a.uhr;
+      if (zus) zus.textContent = 'Ehrlich gerechnet aus der aktuellen Auslastung von Küche und Ofen' + (a.hinweis ? '. ' + a.hinweis : '.');
+    }).catch(function (e) {
+      if (wert) wert.textContent = '–';
+      if (zus) zus.textContent = e.message;
+    });
+  };
+})();
+
+</script>
 </body>
 </html>
