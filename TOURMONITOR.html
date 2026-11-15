@@ -5150,7 +5150,7 @@ function aufgabeErledigen(a, o) {
 /** Bestand korrigieren und die Bewegung festhalten */
 function lagerKorrektur(z, neu, grund) {
   var alt = z.bestand;
-  z.bestand = Number(neu);
+  z.bestand = Number(neu); delete z.bestandGeschaetzt;
   /* Dieselben Feldnamen wie bei jeder anderen Bewegung, sonst steht die
      Zeile später leer in der Liste. */
   MG.db.lagerbewegungen.unshift({
@@ -13920,6 +13920,26 @@ appStart({
   function pruefen() { if (!deckel.parentNode) return; deckel.style.display = an() ? 'none' : 'block'; }
   setInterval(pruefen, 15000); setTimeout(pruefen, 2000);
 })();
+
+</script>
+<!-- MG_VERFUEGBAR --><script>
+/* Verfügbarkeit (15.11.2026): Ein geschätzter Bestand (vor der ersten Inventur) sperrt keinen Artikel.
+   Gesperrt wird nur, was im Lager ausdrücklich gesperrt ist oder nach einer Zählung wirklich fehlt. */
+function verfuegbarkeit(artikelId, groesse) {
+  var a = artikelVon(artikelId);
+  if (!a) return { ok: false, fehlt: ['unbekannt'] };
+  if (!a.aktiv) return { ok: false, fehlt: ['deaktiviert'] };
+  if (a.art === 'handel' || a.art === 'menue') return { ok: true, fehlt: [] };
+  var liste = stuecklisteFuer({ artikel: artikelId, groesse: groesse || '26', teig: 'std', menge: 1 });
+  var fehlt = [];
+  liste.forEach(function (x) {
+    var z = zutatVon(x.z);
+    if (!z) return;
+    if (z.gesperrt) { fehlt.push(z.name + ' (gesperrt)'); return; }
+    if (!z.bestandGeschaetzt && z.bestand < x.menge) fehlt.push(z.name);
+  });
+  return { ok: fehlt.length === 0, fehlt: fehlt };
+}
 
 </script>
 </body>
