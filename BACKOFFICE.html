@@ -27436,5 +27436,426 @@ function verfuegbarkeit(artikelId, groesse) {
 }
 
 </script>
+<!-- MG_LAGERAUTO --><script>
+/* ============================================================
+   MASTERS GASTRO — Lager-Autopilot (15.11.2026)
+   Ziel: Bestände stimmen mit der Zeit von selbst, ohne große
+   Inventur und ohne das Team im Ablauf zu stören.
+
+   1. Abfall in drei Tipps: Knopf „Abfall“ in Kasse, Küche,
+      Vorbereitung, Ausgabe und Team-App (Pizza, Zutat, Tagesende).
+   2. Storno nach dem Belegen/Backen geht nicht zurück ins Lager,
+      sondern wird als Verlust gebucht — automatisch.
+   3. Kurz-Zählen: In ruhigen Minuten verteilt die Aufgaben-KI
+      täglich wenige Zählaufgaben, wichtigste und älteste zuerst.
+      Gezählt wird in Packungen, nicht in Gramm.
+   4. Lernender Schwund: Jede Zählung vergleicht Soll und Ist und
+      lernt je Zutat einen Verbrauchsfaktor (z. B. Käse 1,08 =
+      8 % mehr als die Rezeptur). Einmal am Tag wird der gelernte
+      Mehrverbrauch gebucht. So nähert sich der Bestand der
+      Wirklichkeit an, auch bevor alles gezählt ist.
+   ============================================================ */
+
+var VERLUST_GRUENDE = {
+  pizza: ['Verbrannt', 'Falsch belegt', 'Runtergefallen', 'Reklamation'],
+  zutat: ['MHD abgelaufen', 'Verdorben', 'Runtergefallen', 'Rest Tagesende']
+};
+var LAGER_AUTO = { zaehlenProTag: 4, lernRate: 0.3, faktorMin: 0.6, faktorMax: 1.8 };
+
+function laWer() { return MG.ich ? MG.ich.name : (MG.app && MG.app.titel) || 'Gerät'; }
+function laRund(x) { return Math.round(x * 1000) / 1000; }
+
+/* ---------- 1. Verlust buchen ---------- */
+function verlustZutat(z, menge, grund, bezug) {
+  menge = Number(menge) || 0;
+  if (!z || !(menge > 0)) return 0;
+  z.bestand = laRund(z.bestand - menge);
+  MG.db.lagerbewegungen.unshift({
+    id: id('lb'), zeit: jetzt(), zutat: z.id, menge: -menge, einheit: z.einheit,
+    grund: 'Verlust: ' + grund, bezug: bezug || laWer(), bestandDanach: z.bestand, verlust: true
+  });
+  return menge * (z.ekEinheit || 0);
+}
+function verlustPizza(artikelId, groesse, menge, grund) {
+  var pos = { artikel: artikelId, groesse: groesse || '26', teig: 'std', menge: menge || 1 };
+  var wert = 0;
+  stuecklisteFuer(pos).forEach(function (x) {
+    var z = zutatVon(x.z);
+    if (z) wert += verlustZutat(z, x.menge * (menge || 1), grund, laWer());
+  });
+  var a = artikelVon(artikelId);
+  chronik('lager', 'Verlust: ' + (menge || 1) + ' x ' + (a ? a.name : artikelId) + ' ' + (groesse || '26') + ' cm (' + grund + '), ' + eur(wert) + ' Wareneinsatz, erfasst von ' + laWer());
+  sichern();
+  return wert;
+}
+
+/* ---------- 2. Storno nach Produktion = Verlust, nicht zurück ins Lager ---------- */
+function laSchonBelegt(p) {
+  if (!p) return false;
+  if (p.status === 'fertig' || p.status === 'inArbeit') return true;
+  if (p.zeiten && Object.keys(p.zeiten).some(function (k) { return p.zeiten[k]; })) return true;
+  if (p.begonnen && Object.keys(p.begonnen).some(function (k) { return p.begonnen[k]; })) return true;
+  return false;
+}
+(function () {
+  if (typeof lagerZurueck !== 'function') return;
+  var zurueckAlt = lagerZurueck;
+  lagerZurueck = function (pos, grund, bezug) {
+    if (laSchonBelegt(pos)) {
+      /* Ware ist verbraucht: Abgang bleibt, wird aber als Verlust gekennzeichnet */
+      var m = pos.menge || 1;
+      stuecklisteFuer(pos).forEach(function (x) {
+        MG.db.lagerbewegungen.unshift({
+          id: id('lb'), zeit: jetzt(), zutat: x.z, menge: 0, einheit: x.einheit,
+          grund: 'Verlust: Storno nach Produktion', bezug: (bezug || '') + ' · ' + laRund(x.menge * m) + ' ' + (x.einheit || ''),
+          verlust: true, verlustMenge: laRund(x.menge * m)
+        });
+      });
+      return;
+    }
+    return zurueckAlt(pos, grund, bezug);
+  };
+})();
+
+/* ---------- 3. Kurz-Zählen in ruhigen Minuten ---------- */
+function laVerbrauch(zid, seit, nurVerkauf) {
+  var s = 0;
+  (MG.db.lagerbewegungen || []).forEach(function (b) {
+    if (b.zutat !== zid || b.zeit <= seit || !(b.menge < 0)) return;
+    if (nurVerkauf && b.grund !== 'Verkauf') return;
+    s -= b.menge;
+  });
+  return s;
+}
+function laZaehlArt(z) {
+  if ((z.einheit === 'g' || z.einheit === 'ml') && z.gebinde >= 300) {
+    var g = z.gebinde >= 1000 ? zahl(z.gebinde / 1000, 2) + (z.einheit === 'g' ? ' kg' : ' l') : z.gebinde + ' ' + z.einheit;
+    return { faktor: z.gebinde, frage: 'Wie viele Packungen sind da (je ' + g + ')? Angebrochene schätzen, z. B. 2,5.' };
+  }
+  if (z.einheit === 'g' || z.einheit === 'ml') return { faktor: 1, frage: 'Wie viel ist da, in ' + (z.einheit === 'g' ? 'Gramm' : 'Milliliter') + '?' };
+  if (z.gebinde >= 20) return { faktor: z.gebinde, frage: 'Wie viele Packungen sind da (je ' + z.gebinde + ' Stück)? Angebrochene schätzen, z. B. 3,5.' };
+  return { faktor: 1, frage: 'Wie viele Stück sind da?' };
+}
+function laStation(z) {
+  if (z.gruppe === 'Verpackung' || z.gruppe === 'Getränk') return 'pack';
+  if (z.kuehlung === 'tk') return 'kueche';
+  return 'vorb';
+}
+function zaehlKandidaten() {
+  var h = heute(), t7 = jetzt() - 7 * 86400000;
+  return (MG.db.zutaten || []).filter(function (z) {
+    return z.aktiv !== false && !z.gesperrt && z.gezaehltAm !== h;
+  }).map(function (z) {
+    var tage = z.letzteZaehlung ? Math.min(30, (jetzt() - z.letzteZaehlung) / 86400000) : 30;
+    var wert7 = laVerbrauch(z.id, t7) * (z.ekEinheit || 0);
+    var lager = Math.max(0, z.bestand) * (z.ekEinheit || 0);
+    var unsicher = z.bestandGeschaetzt ? 2 : (z.verbrauchFaktor && Math.abs(z.verbrauchFaktor - 1) > 0.1 ? 1.5 : 1);
+    return { z: z, s: (wert7 + 0.15 * lager + 0.5) * tage * unsicher };
+  }).sort(function (a, b) { return b.s - a.s; }).filter(function (x) {
+    /* je Warengruppe höchstens eine Zählung am Tag, damit es abwechslungsreich und kurz bleibt */
+    var g = x.z.gruppe || '-';
+    if (this[g]) return false; this[g] = true; return true;
+  }, {}).slice(0, LAGER_AUTO.zaehlenProTag).map(function (x) { return x.z; });
+}
+function zaehlRegeln() {
+  return zaehlKandidaten().map(function (z) {
+    var za = laZaehlArt(z);
+    return {
+      id: 'ZK_' + z.id, art: 'inventur', titel: 'Kurz zählen: ' + z.name,
+      text: (z.ort ? 'Lagerort ' + z.ort + '. ' : '') + za.frage,
+      station: laStation(z), minuten: 2, intervall: 'taeglich', nachweis: 'zahl',
+      zutat: z.id, zaehlFaktor: za.faktor, dynamisch: true
+    };
+  });
+}
+function laSpaetMinuten() {
+  var d = new Date(), we = d.getDay() === 0 || d.getDay() === 6;
+  var o = (MG.db.betrieb && MG.db.betrieb.oeffnung) || {};
+  var z = (we ? o.wochenende : o.werktag) || { bis: '21:00' };
+  var t = String(z.bis || '21:00').split(':');
+  return (Number(t[0]) * 60 + Number(t[1] || 0)) - (d.getHours() * 60 + d.getMinutes());
+}
+function tagesendeRegel() {
+  var rest = laSpaetMinuten();
+  if (rest > 45 || rest < -90) return [];
+  return [{
+    id: 'TE_REST', art: 'sonstiges', titel: 'Tagesende: Reste eintragen',
+    text: 'Was wird heute weggeworfen? Unten links auf „Abfall“ tippen, dann „Tagesende“. Dauert eine Minute.',
+    station: 'vorb', minuten: 2, intervall: 'taeglich', nachweis: 'haken', dynamisch: true
+  }];
+}
+
+(function () {
+  if (typeof aufgabenKatalog !== 'function' || typeof aufgabenTakt !== 'function') return;
+  var katalogAlt = aufgabenKatalog, taktAlt = aufgabenTakt, gebenAlt = aufgabeGeben, erledigenAlt = aufgabeErledigen;
+  var mitDynamik = false;
+  aufgabenKatalog = function () {
+    var basis = katalogAlt();
+    if (!mitDynamik) return basis;
+    return basis.filter(function (r) { return r.art !== 'inventur' || !r.zutat; }).concat(zaehlRegeln(), tagesendeRegel());
+  };
+  aufgabenTakt = function () {
+    mitDynamik = true;
+    try { return taktAlt(); } finally { mitDynamik = false; }
+  };
+  aufgabeGeben = function (m, regel, grund) {
+    var a = gebenAlt(m, regel, grund);
+    if (a && regel.zaehlFaktor) { a.zaehlFaktor = regel.zaehlFaktor; sichern(); }
+    return a;
+  };
+  aufgabeErledigen = function (a, o) {
+    o = Object.assign({}, o || {});
+    var z = a.zutat ? zutatVon(a.zutat) : null;
+    if (z && o.zahl !== undefined && o.zahl !== null && o.zahl !== '') {
+      var ist = laRund(Number(String(o.zahl).replace(',', '.')) * (a.zaehlFaktor || 1));
+      if (!isNaN(ist)) {
+        o.zahl = ist;
+        schwundLernen(z, z.bestand, ist);
+        z.gezaehltAm = heute(); z.letzteZaehlung = jetzt();
+      }
+    }
+    return erledigenAlt(a, o);
+  };
+})();
+
+/* ---------- 4. Lernender Schwund ---------- */
+function schwundLernen(z, soll, ist) {
+  var seit = z.letzteZaehlung || 0;
+  var eintrag = { zeit: jetzt(), soll: laRund(soll), ist: laRund(ist), wer: laWer() };
+  if (seit && !z.bestandGeschaetzt) {
+    var rezept = laVerbrauch(z.id, seit, true);
+    var gelernt = 0;
+    (MG.db.lagerbewegungen || []).forEach(function (b) {
+      if (b.zutat === z.id && b.zeit > seit && /gelernt/.test(b.grund || '')) gelernt -= b.menge;
+    });
+    if (rezept > 0 && rezept >= Math.min(z.gebinde || 1, 2000) * 0.3) {
+      var beob = (rezept + gelernt + (soll - ist)) / rezept;
+      beob = Math.max(LAGER_AUTO.faktorMin, Math.min(LAGER_AUTO.faktorMax, beob));
+      var alt = z.verbrauchFaktor || 1;
+      z.verbrauchFaktor = Math.round(((1 - LAGER_AUTO.lernRate) * alt + LAGER_AUTO.lernRate * beob) * 1000) / 1000;
+      eintrag.rezept = laRund(rezept); eintrag.beobachtet = Math.round(beob * 1000) / 1000; eintrag.faktor = z.verbrauchFaktor;
+    }
+  } else eintrag.start = true;
+  z.zaehlungen = (z.zaehlungen || []).concat([eintrag]).slice(-12);
+}
+
+/** Einmal am Tag: gelernten Mehr- oder Minderverbrauch von gestern buchen */
+function schwundTageslauf() {
+  if (!MG.db || !MG.db.zutaten || !MG.db.einstellungen) return;
+  if (typeof aufgabenRechner === 'function' && !aufgabenRechner()) return;
+  var gestern = tagVon(jetzt() - 86400000);
+  if (MG.db.einstellungen.schwundTag === gestern) return;
+  MG.db.einstellungen.schwundTag = gestern;
+  var von = new Date(gestern + 'T00:00:00').getTime(), bis = von + 86400000, n = 0;
+  MG.db.zutaten.forEach(function (z) {
+    var f = z.verbrauchFaktor || 1;
+    if (Math.abs(f - 1) < 0.03) return;
+    var v = 0;
+    MG.db.lagerbewegungen.forEach(function (b) { if (b.zutat === z.id && b.grund === 'Verkauf' && b.zeit >= von && b.zeit < bis) v -= b.menge; });
+    if (!(v > 0)) return;
+    var extra = laRund(v * (f - 1));
+    z.bestand = laRund(z.bestand - extra);
+    MG.db.lagerbewegungen.unshift({
+      id: id('lb'), zeit: bis - 1, zutat: z.id, menge: -extra, einheit: z.einheit,
+      grund: extra > 0 ? 'Mehrverbrauch (gelernt)' : 'Minderverbrauch (gelernt)',
+      bezug: 'Faktor ' + zahl(f, 2) + ' auf ' + zahl(v, 0) + ' ' + z.einheit + ' Verkauf am ' + gestern, bestandDanach: z.bestand
+    });
+    n++;
+  });
+  if (n) chronik('lager', 'Gelernter Schwund für ' + gestern + ' gebucht (' + n + ' Zutaten)');
+  sichern();
+}
+
+/** Auswertung: Verluste und gelernte Faktoren */
+function verlustAuswertung(tage) {
+  var seit = jetzt() - (tage || 7) * 86400000, je = {}, summe = 0;
+  (MG.db.lagerbewegungen || []).forEach(function (b) {
+    if (b.zeit < seit || !/^Verlust/.test(b.grund || '')) return;
+    var z = zutatVon(b.zutat); if (!z) return;
+    var m = b.menge < 0 ? -b.menge : (b.verlustMenge || 0);
+    var w = m * (z.ekEinheit || 0);
+    var k = b.grund.replace(/^Verlust: /, '');
+    je[k] = (je[k] || 0) + w; summe += w;
+  });
+  var faktoren = (MG.db.zutaten || []).filter(function (z) { return z.verbrauchFaktor && Math.abs(z.verbrauchFaktor - 1) >= 0.03; })
+    .map(function (z) { return { z: z, f: z.verbrauchFaktor }; }).sort(function (a, b) { return Math.abs(b.f - 1) - Math.abs(a.f - 1); });
+  return { summe: summe, je: je, faktoren: faktoren };
+}
+
+/* ---------- Oberfläche: Abfall in drei Tipps ---------- */
+function laChips(liste, dann, aktiv) {
+  return el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '8px 0' } }, liste.map(function (x) {
+    var t = typeof x === 'string' ? x : x.t;
+    return el('button', { class: 'b' + (aktiv === t ? ' p' : ''), type: 'button', text: t, onclick: function () { dann(x); } });
+  }));
+}
+function abfallDialog(start) {
+  var reiter = start || 'pizza';
+  var inn = el('div', { style: { minHeight: '320px' } });
+  var d = dialog({ titel: 'Abfall erfassen', inhalt: inn, knoepfe: [{ text: 'Fertig' }] });
+  function kopf() {
+    var r = [{ k: 'pizza', t: 'Pizza' }, { k: 'zutat', t: 'Zutat' }, { k: 'ende', t: 'Tagesende' }];
+    if (MG.app && MG.app.k === 'backoffice') r.push({ k: 'auswertung', t: 'Auswertung' });
+    return el('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } }, r.map(function (x) {
+      return el('button', { class: 'b' + (reiter === x.k ? ' p' : ''), type: 'button', text: x.t, onclick: function () { reiter = x.k; malen(); } });
+    }));
+  }
+  var wahl = {};
+  function malen() {
+    inn.innerHTML = '';
+    inn.appendChild(kopf());
+    if (reiter === 'pizza') malenPizza();
+    else if (reiter === 'zutat') malenZutat();
+    else if (reiter === 'ende') malenEnde();
+    else malenAuswertung();
+  }
+  function malenPizza() {
+    var pizzen = MG.db.artikel.filter(function (a) { return a.aktiv !== false && (a.art === 'pizza' || a.art === 'myo'); });
+    if (!wahl.pizza) {
+      inn.appendChild(el('div', { class: 'klein', text: 'Welche Pizza?' }));
+      inn.appendChild(laChips(pizzen.map(function (a) { return { t: a.name, a: a }; }), function (x) { wahl.pizza = x.a; wahl.gr = '26'; wahl.menge = 1; malen(); }));
+      return;
+    }
+    inn.appendChild(el('div', { style: { fontWeight: '700', margin: '4px 0' }, text: wahl.pizza.name }));
+    inn.appendChild(laChips(['20', '26', '32'].map(function (g) { return { t: g + ' cm', g: g }; }), function (x) { wahl.gr = x.g; malen(); }, wahl.gr + ' cm'));
+    inn.appendChild(laChips([{ t: '1 Stück', n: 1 }, { t: '2 Stück', n: 2 }, { t: '3 Stück', n: 3 }], function (x) { wahl.menge = x.n; malen(); }, wahl.menge + ' Stück'));
+    inn.appendChild(el('div', { class: 'klein', text: 'Warum? Ein Tipp bucht sofort.' }));
+    inn.appendChild(laChips(VERLUST_GRUENDE.pizza, function (g) {
+      var w = verlustPizza(wahl.pizza.id, wahl.gr, wahl.menge, g);
+      melde(wahl.menge + ' x ' + wahl.pizza.name + ' ' + wahl.gr + ' cm als Verlust gebucht (' + eur(w) + ').', 'gr');
+      wahl = {}; malen();
+    }));
+    inn.appendChild(el('button', { class: 'b', type: 'button', text: 'Andere Pizza', onclick: function () { wahl = {}; malen(); } }));
+  }
+  function zutatenListe() {
+    var v = verbrauchProTag(14);
+    return MG.db.zutaten.filter(function (z) { return z.aktiv !== false && z.gruppe !== 'Verpackung'; })
+      .sort(function (a, b) { return (v[b.id] || 0) * (b.ekEinheit || 0) - (v[a.id] || 0) * (a.ekEinheit || 0); });
+  }
+  function malenZutat() {
+    if (!wahl.z) {
+      var such = el('input', { class: 'kasseSuche', placeholder: 'Zutat suchen', style: { width: '100%' } });
+      var raster = el('div');
+      function liste() {
+        var q = such.value.trim().toLowerCase();
+        raster.innerHTML = '';
+        raster.appendChild(laChips(zutatenListe().filter(function (z) { return !q || z.name.toLowerCase().indexOf(q) >= 0; }).slice(0, q ? 40 : 24)
+          .map(function (z) { return { t: z.name, z: z }; }), function (x) { wahl.z = x.z; wahl.m = null; malen(); }));
+      }
+      such.addEventListener('input', liste);
+      inn.appendChild(such); inn.appendChild(raster); liste();
+      return;
+    }
+    var z = wahl.z, ein = z.einheit || '';
+    inn.appendChild(el('div', { style: { fontWeight: '700', margin: '4px 0' }, text: z.name }));
+    var mengen = [];
+    if (ein === 'g' || ein === 'ml') {
+      mengen = [{ t: '1 Portion (70 ' + ein + ')', m: 70 }, { t: '250 ' + ein, m: 250 }, { t: '500 ' + ein, m: 500 }];
+      if (z.gebinde >= 500) mengen.push({ t: '½ Packung', m: z.gebinde / 2 }, { t: '1 Packung', m: z.gebinde });
+    } else {
+      mengen = [{ t: '1 Stück', m: 1 }, { t: '2 Stück', m: 2 }, { t: '5 Stück', m: 5 }];
+      if (z.gebinde > 5) mengen.push({ t: '1 Packung (' + z.gebinde + ')', m: z.gebinde });
+    }
+    inn.appendChild(laChips(mengen, function (x) { wahl.m = x.m; wahl.mt = x.t; malen(); }, wahl.mt));
+    var frei = el('input', { type: 'number', inputmode: 'decimal', placeholder: 'oder Menge in ' + ein, style: { width: '100%' } });
+    frei.addEventListener('input', function () { wahl.m = Number(String(frei.value).replace(',', '.')) || null; wahl.mt = null; });
+    inn.appendChild(frei);
+    inn.appendChild(el('div', { class: 'klein', style: { marginTop: '8px' }, text: 'Warum? Ein Tipp bucht sofort.' }));
+    inn.appendChild(laChips(VERLUST_GRUENDE.zutat, function (g) {
+      if (!(wahl.m > 0)) { melde('Bitte zuerst die Menge wählen.', 'rot'); return; }
+      var w = verlustZutat(z, wahl.m, g); sichern();
+      chronik('lager', 'Verlust: ' + zahl(wahl.m, 0) + ' ' + ein + ' ' + z.name + ' (' + g + '), ' + eur(w) + ', erfasst von ' + laWer());
+      melde(zahl(wahl.m, 0) + ' ' + ein + ' ' + z.name + ' als Verlust gebucht (' + eur(w) + ').', 'gr');
+      wahl = {}; malen();
+    }));
+    inn.appendChild(el('button', { class: 'b', type: 'button', text: 'Andere Zutat', onclick: function () { wahl = {}; malen(); } }));
+  }
+  function malenEnde() {
+    var h0 = new Date(heute() + 'T00:00:00').getTime();
+    var heuteGenutzt = {};
+    MG.db.lagerbewegungen.forEach(function (b) { if (b.zeit >= h0 && b.grund === 'Verkauf') heuteGenutzt[b.zutat] = true; });
+    var frisch = MG.db.zutaten.filter(function (z) {
+      return z.aktiv !== false && z.kuehlung === 'kuehl' && (heuteGenutzt[z.id] || (z.mhdTage && z.mhdTage <= 7));
+    });
+    inn.appendChild(el('div', { class: 'klein', text: 'Nur eintragen, was wirklich in den Müll geht. Alles andere bleibt leer.' }));
+    var mengen = {};
+    frisch.forEach(function (z) {
+      var ein = z.einheit || '';
+      var anzeige = el('span', { style: { minWidth: '70px', fontWeight: '700' }, text: '0 ' + ein });
+      function plus(n) { mengen[z.id] = Math.max(0, (mengen[z.id] || 0) + n); anzeige.textContent = zahl(mengen[z.id], 0) + ' ' + ein; }
+      var schritte = ein === 'g' || ein === 'ml' ? [50, 100, 250] : [1, 5];
+      inn.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', padding: '6px 0', borderBottom: '1px solid rgba(128,128,128,.25)' } },
+        [el('span', { style: { flex: '1 1 160px' }, text: z.name }), anzeige]
+          .concat(schritte.map(function (n) { return el('button', { class: 'b', type: 'button', text: '+' + n, onclick: function () { plus(n); } }); }))
+          .concat([el('button', { class: 'b', type: 'button', text: '0', onclick: function () { mengen[z.id] = 0; anzeige.textContent = '0 ' + ein; } })])));
+    });
+    if (!frisch.length) inn.appendChild(el('div', { class: 'klein', text: 'Heute wurde noch nichts Frisches verbraucht.' }));
+    inn.appendChild(el('button', { class: 'b p voll', type: 'button', style: { marginTop: '12px' }, text: 'Tagesende buchen', onclick: function () {
+      var w = 0, n = 0;
+      Object.keys(mengen).forEach(function (zid) { if (mengen[zid] > 0) { w += verlustZutat(zutatVon(zid), mengen[zid], 'Rest Tagesende'); n++; } });
+      chronik('lager', 'Tagesende: ' + n + ' Reste weggeworfen, ' + eur(w) + ', erfasst von ' + laWer());
+      sichern();
+      melde(n ? 'Tagesende gebucht: ' + n + ' Positionen, ' + eur(w) + '.' : 'Tagesende gebucht: nichts weggeworfen.', 'gr');
+      d.zu();
+    } }));
+  }
+  function malenAuswertung() {
+    var a = verlustAuswertung(7);
+    inn.appendChild(el('div', { style: { fontWeight: '700' }, text: 'Verluste letzte 7 Tage: ' + eur(a.summe) }));
+    Object.keys(a.je).sort(function (x, y) { return a.je[y] - a.je[x]; }).forEach(function (k) {
+      inn.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, [el('span', { text: k }), el('span', { text: eur(a.je[k]) })]));
+    });
+    inn.appendChild(el('div', { style: { fontWeight: '700', marginTop: '14px' }, text: 'Gelernter Mehr- oder Minderverbrauch' }));
+    if (!a.faktoren.length) inn.appendChild(el('div', { class: 'klein', text: 'Noch nichts gelernt. Das kommt mit den täglichen Kurz-Zählungen, ab der zweiten Zählung je Zutat.' }));
+    a.faktoren.forEach(function (x) {
+      var p = Math.round((x.f - 1) * 100);
+      inn.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, [el('span', { text: x.z.name }), el('span', { text: (p > 0 ? '+' : '') + p + ' % gegenüber Rezeptur' })]));
+    });
+  }
+  malen();
+}
+
+/* Knopf unten links in den Arbeitsanwendungen */
+(function () {
+  var apps = ['kasse', 'kds', 'vorbereitung', 'ausgabe', 'team', 'backoffice'];
+  function knopf() {
+    if (!MG.app || apps.indexOf(MG.app.k) < 0 || document.getElementById('laAbfall')) return;
+    var b = el('button', {
+      id: 'laAbfall', type: 'button', text: 'Abfall', onclick: function () { abfallDialog(); },
+      style: { position: 'fixed', left: '10px', bottom: '10px', zIndex: '900', padding: '10px 16px', borderRadius: '999px', border: '0',
+        background: '#E41951', color: '#fff', fontWeight: '700', fontSize: '15px', boxShadow: '0 4px 14px rgba(0,0,0,.35)', cursor: 'pointer' }
+    });
+    document.body.appendChild(b);
+  }
+  function los() {
+    knopf();
+    setTimeout(schwundTageslauf, 60000);
+    setInterval(function () { knopf(); schwundTageslauf(); }, 10 * 60000);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(los, 3000); });
+  else setTimeout(los, 3000);
+})();
+
+/* Team-App: blind zählen (Systemwert ausblenden), Packungen mit Komma erlauben */
+(function () {
+  if (typeof aufgabeAbschluss !== 'function') return;
+  var abschlussAlt = aufgabeAbschluss;
+  aufgabeAbschluss = function (a, m) {
+    var r = abschlussAlt(a, m);
+    setTimeout(function () {
+      var dl = document.querySelectorAll('.dlg'), d = dl[dl.length - 1];
+      if (!d) return;
+      var f = d.querySelector('input[name=zahl]');
+      if (f) {
+        f.setAttribute('step', 'any'); f.setAttribute('inputmode', 'decimal');
+        if (a.zaehlFaktor > 1) f.setAttribute('placeholder', 'Anzahl Packungen, z. B. 2,5');
+      }
+      if (a.zutat) Array.prototype.forEach.call(d.querySelectorAll('.karte'), function (k) { if (/Im System stehen/.test(k.textContent)) k.style.display = 'none'; });
+    }, 0);
+    return r;
+  };
+})();
+
+</script>
 </body>
 </html>
