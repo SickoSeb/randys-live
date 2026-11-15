@@ -19670,7 +19670,7 @@ function gutscheinKarte(g, o) {
   karte2.appendChild(el('div', { class: 'wkQr' }, QR.bild(gutscheinKennung(g), 150, { hell: '#ffffff', dunkel: '#121212' })));
   karte2.appendChild(el('div', { class: 'wkCode', text: g.code }));
   karte2.appendChild(el('div', { class: 'wkFuss' }, [
-    el('span', { text: kunde ? 'Für ' + kunde.name : 'Übertragbar' }),
+    el('span', { text: kunde ? 'Für ' + kunde.name : g.kundeName ? 'Für ' + g.kundeName : 'Übertragbar' }),
     el('span', { text: g.mindest ? 'ab ' + eur(g.mindest) : 'ohne Mindestwert' })
   ]));
   return karte2;
