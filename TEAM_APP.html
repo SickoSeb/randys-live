@@ -9034,31 +9034,11 @@ function notzugang() {
   }
 
   inn.appendChild(el('div', { class: 'klein', style: { marginTop: '14px' }, text:
-    'Eigene PINs vergibst du im Backoffice unter Mitarbeiter → Personalakten. „Anmeldung reparieren" setzt nur Rollen und ' +
-    'PINs auf den Auslieferungszustand — Bestellungen, Umsatz, Karte und Lager bleiben, wie sie sind.' }));
+    'PIN vergessen? Bitte an den Filialleiter Andreas Dippel wenden. Neue PINs vergibt nur der Geschäftsinhaber im Backoffice.' }));
 
   dialog({
     titel: 'Ich komme nicht rein', inhalt: inn, knoepfe: [
-      { text: 'Schließen', art: 'p' },
-      {
-        text: 'Anmeldung reparieren', art: 'ge', tun: function () {
-          anmeldungReparieren();
-          melde('Anmeldung repariert. Der Chef kommt jetzt mit 1111 rein.', 'gr');
-          setTimeout(neuMalen, 60);
-        }
-      },
-      {
-        text: 'Alles zurücksetzen', tun: function () {
-          frage('Alles zurücksetzen',
-            'Der ganze Bestand geht auf den Auslieferungszustand zurück — auch Bestellungen und Umsatz. Das wirkt in allen Anwendungen.',
-            function () {
-              MG.db = neueDatenbank(); MG.db.stand = jetzt();
-              sichern(true);
-              melde('Zurückgesetzt. Anmeldung mit 1111.', 'gr');
-              setTimeout(neuMalen, 60);
-            }, 'Zurücksetzen');
-        }
-      }
+      { text: 'Schließen', art: 'p' }
     ]
   });
 }
@@ -13236,6 +13216,11 @@ function teamStempeln(m, art) {
     Team.ort = ort;
     Team.ortLaeuft = false;
     var a = amBetrieb(ort);
+    if (MG.db.einstellungen.stempelGpsPflicht && !ort.ok) {
+      melde('Standort ist aus. Bitte den Standort für diese App einschalten, sonst ist Stempeln nicht möglich.', 'rot');
+      neuMalen();
+      return;
+    }
     if (MG.db.einstellungen.stempelGpsPflicht && (!ort.ok || (a && !a.drin))) {
       melde('Stempeln nur am Betrieb möglich' + (a ? ' (' + a.meter + ' m entfernt)' : ''), 'rot');
       neuMalen();
