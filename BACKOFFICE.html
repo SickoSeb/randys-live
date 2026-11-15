@@ -21719,11 +21719,11 @@ function beitragEntwurf(kanal, thema) {
   var renner = MG.db.artikel.filter(function (a) { return a.beliebt; }).sort(function (a, b) { return b.beliebt - a.beliebt; })[0]
     || MG.db.artikel.filter(function (a) { return a.art === 'pizza'; })[0];
   var vorschlaege = {
-    Instagram: '' + (thema || renner.name) + '\n\nFrisch aus dem Steinofen bei ' + MG.db.betrieb.ort + '. ' + (renner.text || '') + '\nAb ' + eur(renner.preise ? renner.preise['20'] : renner.preis) + '.\n\n' + MG.db.betrieb.strasse + '\ntäglich ' + MG.db.betrieb.oeffnung.von + '–' + MG.db.betrieb.oeffnung.bis + '\n\n#pizza #' + MG.db.betrieb.ort.toLowerCase() + ' #steinofen #lieferservice',
+    Instagram: '' + (thema || renner.name) + '\n\nFrisch aus dem Ofen bei ' + MG.db.betrieb.ort + '. ' + (renner.text || '') + '\nAb ' + eur(renner.preise ? renner.preise['20'] : renner.preis) + '.\n\n' + MG.db.betrieb.strasse + '\ntäglich ' + MG.db.betrieb.oeffnung.von + '–' + MG.db.betrieb.oeffnung.bis + '\n\n#pizza #' + MG.db.betrieb.ort.toLowerCase() + ' #ofenfrisch #lieferservice',
     TikTok: 'Hook (0–2 s): "So entsteht unsere ' + (thema || renner.name) + '"\n2–8 s: Teig, Sauce, Belag im Schnellschnitt\n8–13 s: Ofen, ' + Math.round(MG.db.einstellungen.ofenDurchlauf / 60) + ' Minuten bei ' + MG.db.einstellungen.ofenTemp + " °C\n13–15 s: Anschnitt + \"Bestell jetzt\"\n\nText im Bild: " + (thema || renner.name) + ' · ab ' + eur(renner.preise ? renner.preise['20'] : renner.preis),
     Facebook: (thema || renner.name) + ' — heute frisch bei ' + MG.db.betrieb.name + '.\n\nAbholung oder Lieferung im Umkreis von ' + MG.db.betrieb.lieferradius + ' km. Bestellen unter ' + MG.db.betrieb.telefon + ' oder auf ' + MG.db.betrieb.web + '.',
     LinkedIn: 'Mittagspause im Team? Wir liefern warm und pünktlich.\n\n' + MG.db.betrieb.name + ' beliefert Firmen im Umkreis von ' + MG.db.betrieb.lieferradius + ' km. Vorbestellung mit fester Lieferzeit — unser System sagt die Zeit auf die Minute zu.\n\nAnfragen: ' + MG.db.betrieb.mail,
-    'Google Ads': 'Anzeigentitel 1: Pizza Lieferservice ' + MG.db.betrieb.ort + '\nAnzeigentitel 2: Frisch aus dem Steinofen\nAnzeigentitel 3: In ca. 30 Minuten bei dir\nBeschreibung: ' + renner.name + ' ab ' + eur(renner.preise ? renner.preise['20'] : renner.preis) + '. Online bestellen, Lieferzeit live sehen.\nKeywords: pizza lieferservice ' + MG.db.betrieb.ort.toLowerCase() + ', pizza bestellen, pizza in der nähe'
+    'Google Ads': 'Anzeigentitel 1: Pizza Lieferservice ' + MG.db.betrieb.ort + '\nAnzeigentitel 2: Frisch aus dem Ofen\nAnzeigentitel 3: In ca. 30 Minuten bei dir\nBeschreibung: ' + renner.name + ' ab ' + eur(renner.preise ? renner.preise['20'] : renner.preis) + '. Online bestellen, Lieferzeit live sehen.\nKeywords: pizza lieferservice ' + MG.db.betrieb.ort.toLowerCase() + ', pizza bestellen, pizza in der nähe'
   };
   var inn = el('div');
   inn.appendChild(feld('Text', 'text', vorschlaege[kanal] || vorschlaege.Instagram, { art: 'text' }));
@@ -22131,7 +22131,7 @@ function blattFlyerAussen() {
 
   /* Drei Argumente mit Symbol */
   h.push('<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">');
-  [['5:30', 'Minuten im Steinofen', 'So lange braucht die Pizza — keine Sekunde länger.'],
+  [['5:30', 'Minuten im Ofen', 'So lange braucht die Pizza — keine Sekunde länger.'],
    ['15', 'Minuten Fahrzeit', 'Alles, was wir in einer Viertelstunde erreichen.'],
    ['21:30', 'Uhr Feierabend', 'Abends länger auf als alle anderen hier.']].forEach(function (x) {
     h.push('<div class="dKachel" style="min-height:118px">');

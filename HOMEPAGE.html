@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#070707">
-<meta name="description" content="Randy's Pizza in Lindwedel — frisch belegt, 5:30 Minuten im Steinofen, in 15 Minuten bei dir. Ab 19 € frei geliefert. Mittags Klassiker mit Getränk ab 5 €.">
+<meta name="description" content="Randy's Pizza in Lindwedel — frisch belegt, 5:30 Minuten im Ofen, in 15 Minuten bei dir. Ab 19 € frei geliefert. Mittags Klassiker mit Getränk ab 5 €.">
 <meta property="og:title" content="Randy's Pizza — Heiß. Direkt. Randy's.">
-<meta property="og:description" content="Frisch aus dem Steinofen, in 15 Minuten bei dir. Ab 19 € frei geliefert.">
+<meta property="og:description" content="Frisch aus dem Ofen, in 15 Minuten bei dir. Ab 19 € frei geliefert.">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="de_DE">
 <link rel="canonical" href="https://www.randys-pizza.de/">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Randy's Pizza — Pizza aus dem Steinofen, Lindwedel</title>
+<title>Randy's Pizza — Pizza aus dem Ofen, Lindwedel</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23DE0846'/%3E%3Ctext x='16' y='22' font-size='13' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3EMG%3C/text%3E%3C/svg%3E">
 <style>
 /* ---- Markenschriften (Randy's Brand Style 2026) ---- */
@@ -12679,14 +12679,14 @@ function hpHeld(be) {
     el('span', { class: 'r', text: "RANDY'S." })
   ]));
   links.appendChild(el('div', { class: 'hpLead',
-    text: 'Frisch belegt, ' + minSek(MG.db.einstellungen.ofenDurchlauf) + ' Minuten im Steinofen, ' +
+    text: 'Frisch belegt, ' + minSek(MG.db.einstellungen.ofenDurchlauf) + ' Minuten im Ofen, ' +
       'und dann auf dem schnellsten Weg zu dir. Ab ' + eur(be.freiAb || 19) + ' fahren wir ohne Aufschlag.' }));
   links.appendChild(el('div', { class: 'hpKnoepfe' }, [
     el('a', { class: 'hpGross', href: appDatei('shop'), text: 'Jetzt bestellen' }),
     el('a', { class: 'hpGross still', href: 'tel:' + String(be.telefon).replace(/\s/g, ''), text: be.telefon })
   ]));
   links.appendChild(el('div', { class: 'hpZahlen' }, [
-    el('div', { class: 'hpZahl' }, [el('b', { text: minSek(MG.db.einstellungen.ofenDurchlauf) }), el('span', { text: 'Minuten im Steinofen' })]),
+    el('div', { class: 'hpZahl' }, [el('b', { text: minSek(MG.db.einstellungen.ofenDurchlauf) }), el('span', { text: 'Minuten im Ofen' })]),
     el('div', { class: 'hpZahl' }, [el('b', { text: String(LIEFER_MINUTEN) }), el('span', { text: 'Minuten Fahrzeit — so weit liefern wir' })]),
     el('div', { class: 'hpZahl' }, [el('b', { text: String(lieferOrte().length) }), el('span', { text: 'Orte im Liefergebiet' })])
   ]));

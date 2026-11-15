@@ -13119,7 +13119,7 @@ function istGeoeffnet() {
    ============================================================ */
 function shopKarte(host, b) {
   var held = el('div', { class: 'held' });
-  held.appendChild(el('h1', { text: 'Frisch aus dem Steinofen — in ' + minSek(MG.db.einstellungen.ofenDurchlauf) + ' Minuten gebacken' }));
+  held.appendChild(el('h1', { text: 'Frisch aus dem Ofen — in ' + minSek(MG.db.einstellungen.ofenDurchlauf) + ' Minuten gebacken' }));
   held.appendChild(el('div', { class: 'heldText', text: MG.db.betrieb.strasse + ', ' + MG.db.betrieb.plz + ' ' + MG.db.betrieb.ort + ' · täglich ' + MG.db.betrieb.oeffnung.von + '–' + MG.db.betrieb.oeffnung.bis + ' · Lieferradius ' + MG.db.betrieb.lieferradius + ' km · ' + MG.db.betrieb.telefon }));
   var marken = el('div', { class: 'heldMarken' });
   MG.db.gutscheine.filter(function (g) { return g.aktiv && g.art === 'aktion'; }).forEach(function (g) {
