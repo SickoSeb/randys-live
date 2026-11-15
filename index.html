@@ -12911,10 +12911,10 @@ function laSpaetMinuten() {
 }
 function tagesendeRegel() {
   var rest = laSpaetMinuten();
-  if (rest > 45 || rest < -90) return [];
+  if (rest > 30 || rest < -90 || schwundlisteStand().erledigt) return [];
   return [{
-    id: 'TE_REST', art: 'sonstiges', titel: 'Tagesende: Reste eintragen',
-    text: 'Was wird heute weggeworfen? Unten links auf „Abfall“ tippen, dann „Tagesende“. Dauert eine Minute.',
+    id: 'TE_REST', art: 'sonstiges', titel: 'Schwundliste ausfüllen',
+    text: 'Oben auf das rote Band „Schwundliste“ tippen, Reste eintragen, abschließen. Dauert eine Minute.',
     station: 'vorb', minuten: 2, intervall: 'taeglich', nachweis: 'haken', dynamisch: true
   }];
 }
@@ -13028,7 +13028,7 @@ function abfallDialog(start) {
   var inn = el('div', { style: { minHeight: '320px' } });
   var d = dialog({ titel: 'Abfall erfassen', inhalt: inn, knoepfe: [{ text: 'Fertig' }] });
   function kopf() {
-    var r = [{ k: 'pizza', t: 'Pizza' }, { k: 'zutat', t: 'Zutat' }, { k: 'ende', t: 'Tagesende' }];
+    var r = [{ k: 'pizza', t: 'Pizza' }, { k: 'zutat', t: 'Zutat' }, { k: 'ende', t: 'Schwundliste' }];
     if (MG.app && MG.app.k === 'backoffice') r.push({ k: 'auswertung', t: 'Auswertung' });
     return el('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } }, r.map(function (x) {
       return el('button', { class: 'b' + (reiter === x.k ? ' p' : ''), type: 'button', text: x.t, onclick: function () { reiter = x.k; malen(); } });
@@ -13106,12 +13106,30 @@ function abfallDialog(start) {
   }
   function malenEnde() {
     var h0 = new Date(heute() + 'T00:00:00').getTime();
+    var st = schwundlisteStand();
+    inn.appendChild(el('div', { style: { fontWeight: '700', fontSize: '17px' }, text: 'Schwundliste ' + datum(jetzt()) }));
+    if (st.erledigt) inn.appendChild(el('div', { class: 'pill gr', style: { margin: '6px 0' }, text: 'Heute abgeschlossen um ' + uhr(st.zeit) + ' von ' + st.wer + ' · ' + eur(st.wert) }));
+    /* 1. Was heute schon über den Abfall-Knopf erfasst wurde */
+    var heuteListe = {}, heuteWert = 0;
+    MG.db.lagerbewegungen.forEach(function (b) {
+      if (b.zeit < h0 || !/^Verlust/.test(b.grund || '')) return;
+      var z = zutatVon(b.zutat); if (!z) return;
+      var m = b.menge < 0 ? -b.menge : (b.verlustMenge || 0), w = m * (z.ekEinheit || 0);
+      var k = b.grund.replace(/^Verlust: /, '');
+      heuteListe[k] = (heuteListe[k] || 0) + w; heuteWert += w;
+    });
+    inn.appendChild(el('div', { class: 'klein', style: { marginTop: '8px', fontWeight: '700' }, text: '1. Heute schon erfasst' }));
+    var schon = Object.keys(heuteListe);
+    if (!schon.length) inn.appendChild(el('div', { class: 'klein', text: 'Noch nichts. Falls tagsüber etwas weggeworfen wurde: oben bei „Pizza“ oder „Zutat“ nachtragen.' }));
+    schon.forEach(function (k) { inn.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, [el('span', { text: k }), el('span', { text: eur(heuteListe[k]) })])); });
+    /* 2. Frische Reste, die jetzt weggeworfen werden */
     var heuteGenutzt = {};
     MG.db.lagerbewegungen.forEach(function (b) { if (b.zeit >= h0 && b.grund === 'Verkauf') heuteGenutzt[b.zutat] = true; });
     var frisch = MG.db.zutaten.filter(function (z) {
       return z.aktiv !== false && z.kuehlung === 'kuehl' && (heuteGenutzt[z.id] || (z.mhdTage && z.mhdTage <= 7));
     });
-    inn.appendChild(el('div', { class: 'klein', text: 'Nur eintragen, was wirklich in den Müll geht. Alles andere bleibt leer.' }));
+    inn.appendChild(el('div', { class: 'klein', style: { marginTop: '12px', fontWeight: '700' }, text: '2. Reste, die jetzt in den Müll gehen' }));
+    inn.appendChild(el('div', { class: 'klein', text: 'Nur eintragen, was wirklich weggeworfen wird. Alles andere bleibt auf 0.' }));
     var mengen = {};
     frisch.forEach(function (z) {
       var ein = z.einheit || '';
@@ -13123,13 +13141,23 @@ function abfallDialog(start) {
           .concat(schritte.map(function (n) { return el('button', { class: 'b', type: 'button', text: '+' + n, onclick: function () { plus(n); } }); }))
           .concat([el('button', { class: 'b', type: 'button', text: '0', onclick: function () { mengen[z.id] = 0; anzeige.textContent = '0 ' + ein; } })])));
     });
-    if (!frisch.length) inn.appendChild(el('div', { class: 'klein', text: 'Heute wurde noch nichts Frisches verbraucht.' }));
-    inn.appendChild(el('button', { class: 'b p voll', type: 'button', style: { marginTop: '12px' }, text: 'Tagesende buchen', onclick: function () {
+    /* 3. Teiglinge, die nicht mehr verwendet werden dürfen */
+    var teig = MG.db.zutaten.filter(function (z) { return z.aktiv !== false && /teigling/i.test(z.name); });
+    if (teig.length) {
+      inn.appendChild(el('div', { class: 'klein', style: { marginTop: '12px', fontWeight: '700' }, text: '3. Teiglinge, die weg müssen' }));
+      teig.forEach(function (z) {
+        var anzeige = el('span', { style: { minWidth: '70px', fontWeight: '700' }, text: '0 Stk' });
+        inn.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', padding: '6px 0' } },
+          [el('span', { style: { flex: '1 1 160px' }, text: z.name }), anzeige].concat([1, 5].map(function (n) {
+            return el('button', { class: 'b', type: 'button', text: '+' + n, onclick: function () { mengen[z.id] = (mengen[z.id] || 0) + n; anzeige.textContent = mengen[z.id] + ' Stk'; } });
+          })).concat([el('button', { class: 'b', type: 'button', text: '0', onclick: function () { mengen[z.id] = 0; anzeige.textContent = '0 Stk'; } })])));
+      });
+    }
+    inn.appendChild(el('button', { class: 'b p voll', type: 'button', style: { marginTop: '14px' }, text: st.erledigt ? 'Nachtrag buchen' : 'Schwundliste abschließen', onclick: function () {
       var w = 0, n = 0;
       Object.keys(mengen).forEach(function (zid) { if (mengen[zid] > 0) { w += verlustZutat(zutatVon(zid), mengen[zid], 'Rest Tagesende'); n++; } });
-      chronik('lager', 'Tagesende: ' + n + ' Reste weggeworfen, ' + eur(w) + ', erfasst von ' + laWer());
-      sichern();
-      melde(n ? 'Tagesende gebucht: ' + n + ' Positionen, ' + eur(w) + '.' : 'Tagesende gebucht: nichts weggeworfen.', 'gr');
+      schwundlisteAbschliessen(heuteWert + w, n);
+      melde('Schwundliste ' + (st.erledigt ? 'ergänzt' : 'abgeschlossen') + ': ' + eur(heuteWert + w) + ' Verlust heute. Danke!', 'gr');
       d.zu();
     } }));
   }
@@ -13139,6 +13167,10 @@ function abfallDialog(start) {
     Object.keys(a.je).sort(function (x, y) { return a.je[y] - a.je[x]; }).forEach(function (k) {
       inn.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, [el('span', { text: k }), el('span', { text: eur(a.je[k]) })]));
     });
+    var hist = (MG.db.einstellungen.schwundlisten || []).slice(-7).reverse();
+    inn.appendChild(el('div', { style: { fontWeight: '700', marginTop: '14px' }, text: 'Schwundlisten der letzten Tage' }));
+    if (!hist.length) inn.appendChild(el('div', { class: 'klein', text: 'Noch keine abgeschlossen.' }));
+    hist.forEach(function (x) { inn.appendChild(el('div', { style: { display: 'flex', justifyContent: 'space-between' } }, [el('span', { text: x.tag + ' · ' + x.wer + ' um ' + uhr(x.zeit) }), el('span', { text: eur(x.wert) })])); });
     inn.appendChild(el('div', { style: { fontWeight: '700', marginTop: '14px' }, text: 'Gelernter Mehr- oder Minderverbrauch' }));
     if (!a.faktoren.length) inn.appendChild(el('div', { class: 'klein', text: 'Noch nichts gelernt. Das kommt mit den täglichen Kurz-Zählungen, ab der zweiten Zählung je Zutat.' }));
     a.faktoren.forEach(function (x) {
@@ -13148,6 +13180,65 @@ function abfallDialog(start) {
   }
   malen();
 }
+
+/* ---------- Schwundliste: Stand, Abschluss, Erinnerung ---------- */
+function schwundlisteStand() {
+  var x = (MG.db && MG.db.einstellungen && MG.db.einstellungen.schwundliste) || {};
+  return { erledigt: x.tag === heute(), zeit: x.zeit, wer: x.wer, wert: x.wert || 0 };
+}
+function schwundlisteAbschliessen(wert, n) {
+  var e = MG.db.einstellungen;
+  var x = { tag: heute(), zeit: jetzt(), wer: laWer(), wert: Math.round(wert * 100) / 100, positionen: n };
+  e.schwundliste = x;
+  e.schwundlisten = (e.schwundlisten || []).filter(function (y) { return y.tag !== x.tag; }).concat([x]).slice(-60);
+  chronik('lager', 'Schwundliste ' + x.tag + ' abgeschlossen von ' + x.wer + ': ' + eur(x.wert));
+  sichern();
+  schwundErinnern();
+}
+/** Offen ab 30 Minuten vor Ladenschluss bis zum Abschluss (auch nach Feierabend) */
+function schwundlisteFaellig() {
+  if (!MG.db || !MG.db.einstellungen || schwundlisteStand().erledigt) return false;
+  var rest = laSpaetMinuten();
+  return rest <= 30 && rest > -300;
+}
+function schwundErinnern() {
+  var apps = ['kasse', 'vorbereitung', 'kds', 'ausgabe', 'team'];
+  if (!MG.app || apps.indexOf(MG.app.k) < 0) return;
+  var faellig = schwundlisteFaellig();
+  var band = document.getElementById('laSchwundBand'), knopfEl = document.getElementById('laAbfall');
+  if (knopfEl) {
+    knopfEl.textContent = faellig ? 'Schwundliste offen' : 'Abfall';
+    knopfEl.style.animation = faellig ? 'laPuls 1.4s ease-in-out infinite' : '';
+  }
+  if (!faellig) { if (band) band.remove(); return; }
+  if (!document.getElementById('laPulsStil')) {
+    document.head.appendChild(el('style', { id: 'laPulsStil', text: '@keyframes laPuls{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}' }));
+  }
+  if (!band) {
+    band = el('button', { id: 'laSchwundBand', type: 'button', onclick: function () { abfallDialog('ende'); },
+      style: { position: 'fixed', left: '50%', transform: 'translateX(-50%)', top: '8px', zIndex: '950', padding: '10px 18px', borderRadius: '12px',
+        border: '0', background: '#E41951', color: '#fff', fontWeight: '700', fontSize: '15px', boxShadow: '0 6px 18px rgba(0,0,0,.4)', cursor: 'pointer', maxWidth: 'calc(100vw - 32px)' },
+      text: 'Schwundliste für heute ist noch offen. Jetzt ausfüllen (1 Minute)' });
+    document.body.appendChild(band);
+    /* Vorbereitung: einmal am Abend von selbst öffnen */
+    if (MG.app.k === 'vorbereitung' && laSpaetMinuten() <= 0) {
+      try { if (sessionStorage.getItem('MG_SL_AUF') !== heute()) { sessionStorage.setItem('MG_SL_AUF', heute()); abfallDialog('ende'); } } catch (e) { }
+    }
+  }
+}
+/* Backoffice: Hinweis beim Tagesabschluss, wenn die Schwundliste fehlt */
+(function () {
+  if (typeof tagFestschreiben !== 'function') return;
+  var festAlt = tagFestschreiben;
+  tagFestschreiben = function (tag, o) {
+    var x = (MG.db.einstellungen.schwundlisten || []).filter(function (y) { return y.tag === tag; })[0];
+    if (!x) {
+      chronik('lager', 'Tagesabschluss ' + tag + ' ohne Schwundliste');
+      setTimeout(function () { melde('Hinweis: Für ' + tag + ' wurde keine Schwundliste abgeschlossen. Verluste fehlen in der Auswertung.', 'rot'); }, 300);
+    }
+    return festAlt(tag, o);
+  };
+})();
 
 /* Knopf unten links in den Arbeitsanwendungen */
 (function () {
@@ -13162,8 +13253,9 @@ function abfallDialog(start) {
     document.body.appendChild(b);
   }
   function los() {
-    knopf();
+    knopf(); schwundErinnern();
     setTimeout(schwundTageslauf, 60000);
+    setInterval(schwundErinnern, 30000);
     setInterval(function () { knopf(); schwundTageslauf(); }, 10 * 60000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(los, 3000); });
