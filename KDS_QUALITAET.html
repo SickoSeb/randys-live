@@ -70,6 +70,10 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 .wortmarke{font-weight:800;letter-spacing:.5px;font-size:15px;white-space:nowrap;line-height:1.6;display:flex;align-items:baseline;gap:1px}
 .wortmarke sup{font-size:10px;font-weight:700;opacity:.75;letter-spacing:1.4px;position:relative;top:-.55em}
 .rahmen.zu .wortmarke{display:none}
+/* Eingeklappte Leiste: Logo verkleinert und mittig, laeuft nicht mehr in die Randlinie */
+.rahmen.zu .marke{justify-content:center;padding:0 6px;gap:0}
+.rahmen.zu .logo.bild{height:24px;width:auto;max-width:46px;overflow:hidden;border-radius:3px}
+.rahmen.zu .logo.bild img{height:24px;width:auto;max-width:46px;object-fit:contain}
 
 .kopf{grid-area:kopf;background:var(--bg2);border-bottom:1px solid var(--li);display:flex;align-items:center;
       gap:8px;padding:0 12px;min-width:0}
