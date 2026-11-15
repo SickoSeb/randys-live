@@ -13,9 +13,13 @@ function priceChips(p){
 }
 function minPrice(p){var v=Object.keys(p).map(function(k){return p[k];});return Math.min.apply(null,v);}
 
+var aktTab="bestof";
+function renderMenu(){
+M=window.MENU||[];
 /* Feature: Ehrenpizza */
 var eh=cat("ehren").items[0];
 var feat=document.getElementById("feature");
+if(feat&&!eh){feat.innerHTML="";var fs=feat.closest("section");if(fs)fs.style.display="none";}
 if(eh&&feat){
   feat.innerHTML='<img src="'+eh.bild+'" alt="Oktoberfest Ehrenpizza" loading="lazy">'+
   '<div><p class="eyebrow">Ehrenpizza des Monats</p><h3 class="d">'+esc(eh.name.replace(" Pizza",""))+' <span class="pink">Pizza</span></h3>'+
@@ -34,6 +38,8 @@ if(cg){
       '<div><h3 class="d">'+esc(it.name)+'</h3><ul>'+li+'</ul><div class="pr">'+eur(minPrice(it.preise))+'</div></div></a>';
   }).join("");
 }
+if(typeof tabsEl!=="undefined"&&tabsEl&&view) show(aktTab);
+}
 
 /* Speisekarte mit Tabs */
 var TABS=[
@@ -46,7 +52,7 @@ var TABS=[
   {id:"drinks",label:"Drinks & Snacks",keys:["drinks","snacks"],intro:"Für den Durst und die Lücke danach."}
 ];
 var tabsEl=document.getElementById("tabs"),view=document.getElementById("cat-view");
-function card(it){
+function artikelKarte(it){
   return '<article class="item">'+(it.bild?'<img class="pic" src="'+it.bild+'" alt="'+esc(it.name)+'" loading="lazy" width="560" height="560">':'<div class="pic"></div>')+
     '<div><h4>'+esc(it.name)+'</h4>'+(it.text?'<p class="ing">'+esc(it.text)+'</p>':'')+priceChips(it.preise)+
     '<a class="bestell" href="'+SHOP+'" target="_blank" rel="noopener">Bestellen '+ARROW+'</a></div></article>';
@@ -56,11 +62,11 @@ function mini(it){
     '<h4>'+esc(it.name)+'</h4><b>'+eur(minPrice(it.preise))+'</b></a>';
 }
 function show(id){
-  var t=TABS.filter(function(x){return x.id===id;})[0]||TABS[0];
+  var t=TABS.filter(function(x){return x.id===id;})[0]||TABS[0];aktTab=t.id;
   [].forEach.call(tabsEl.children,function(b){var on=b.dataset.id===t.id;b.classList.toggle("on",on);b.setAttribute("aria-selected",on);});
   var items=[];t.keys.forEach(function(k){items=items.concat(cat(k).items);});
   var compact=/^(dips|drinks)$/.test(t.id);
-  view.innerHTML='<p class="cat-intro">'+t.intro+'</p><div class="grid'+(compact?" mini-grid":"")+'">'+items.map(compact?mini:card).join("")+'</div>';
+  view.innerHTML='<p class="cat-intro">'+t.intro+'</p><div class="grid'+(compact?" mini-grid":"")+'">'+items.map(compact?mini:artikelKarte).join("")+'</div>';
 }
 if(tabsEl&&view){
   tabsEl.innerHTML=TABS.map(function(t){return '<button class="tab" role="tab" data-id="'+t.id+'">'+t.label+'</button>';}).join("");
@@ -70,8 +76,8 @@ if(tabsEl&&view){
     var top=document.getElementById("karte").querySelector(".tabs").getBoundingClientRect().top;
     if(top<0||top>window.innerHeight*.6) tabsEl.scrollIntoView({behavior:"smooth"});
   });
-  show("bestof");
 }
+renderMenu();window.__renderMenu=renderMenu;
 
 /* Instagram-Grid */
 var ig=document.getElementById("ig-grid");
@@ -109,9 +115,11 @@ if(cd){
 /* Jetzt geöffnet? (Europe/Berlin) */
 (function(){
   var hr;try{hr=parseInt(new Intl.DateTimeFormat("de-DE",{hour:"numeric",hour12:false,timeZone:"Europe/Berlin"}).format(new Date()),10);}catch(e){hr=new Date().getHours();}
-  var open=hr>=16&&hr<21;
+  var wt;try{wt=new Intl.DateTimeFormat("en-US",{weekday:"short",timeZone:"Europe/Berlin"}).format(new Date());}catch(e){wt=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date().getDay()];}
+  var we=/Sat|Sun/.test(wt),ab=we?14:11,open=hr>=ab&&hr<21;
+  var morgenWe=/Fri|Sat/.test(wt),morgenAb=morgenWe?14:11;
   [].forEach.call(document.querySelectorAll("[data-open-dot]"),function(d){d.classList.toggle("zu",!open);});
-  [].forEach.call(document.querySelectorAll("[data-open-text]"),function(t){t.textContent=open?"Jetzt geöffnet · bis 21 Uhr":(hr<16?"Heute ab 16 Uhr geöffnet":"Morgen ab 16 Uhr wieder da");});
+  [].forEach.call(document.querySelectorAll("[data-open-text]"),function(t){t.textContent=open?"Jetzt geöffnet · bis 21 Uhr":(hr<ab?"Heute ab "+ab+" Uhr geöffnet":"Morgen ab "+morgenAb+" Uhr wieder da");});
 })();
 
 /* Deal-Formular */
