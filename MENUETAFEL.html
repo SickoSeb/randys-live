@@ -12553,7 +12553,7 @@ function tafelMalen(host) {
   kopf.appendChild(logoKasten(48));
   kopf.appendChild(el('div', null, [
     el('div', { class: 'tafelName', text: MG.db.betrieb.name }),
-    el('div', { class: 'klein', text: 'täglich ' + MG.db.betrieb.oeffnung.von + '–' + MG.db.betrieb.oeffnung.bis + ' · ' + MG.db.betrieb.telefon + ' · ' + MG.db.betrieb.web })
+    el('div', { class: 'klein', text: (MG.db.betrieb.oeffnung.text ? String(MG.db.betrieb.oeffnung.text).replace(/(\d)-(\d)/g, '$1–$2').replace('Sa+So', 'Sa + So') : 'täglich ' + MG.db.betrieb.oeffnung.von + '–' + MG.db.betrieb.oeffnung.bis) + ' · ' + MG.db.betrieb.telefon + ' · ' + MG.db.betrieb.web })
   ]));
   kopf.appendChild(el('div', { style: { marginLeft: 'auto', textAlign: 'right' } }, [
     el('div', { class: 'tafelGruppe', text: g }),
