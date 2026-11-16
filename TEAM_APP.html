@@ -6,7 +6,12 @@
 <meta name="theme-color" content="#070707">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>MASTERS GASTRO · Mitarbeiter-App</title>
+<title>Randy's Pizza App</title>
+<meta name="apple-mobile-web-app-title" content="Randy's Pizza">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="application-name" content="Randy's Pizza App">
+<link rel="manifest" href="team.webmanifest">
+<link rel="apple-touch-icon" href="https://sickoseb.github.io/randys-live/icon-192.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23DE0846'/%3E%3Ctext x='16' y='22' font-size='13' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'%3EMG%3C/text%3E%3C/svg%3E">
 <style>
 /* ---- Markenschriften (Randy's Brand Style 2026) ---- */
@@ -1328,9 +1333,6 @@ body[data-app="team"]{background:var(--bg)}
 
 </style>
 <script src="supabase.js"></script>
-<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%20%22Randy%27s%20Team%22%2C%20%22short_name%22%3A%20%22Team%22%2C%20%22start_url%22%3A%20%22TEAM_APP.html%22%2C%20%22scope%22%3A%20%22./%22%2C%20%22display%22%3A%20%22standalone%22%2C%20%22orientation%22%3A%20%22any%22%2C%20%22background_color%22%3A%20%22%23070707%22%2C%20%22theme_color%22%3A%20%22%23070707%22%2C%20%22icons%22%3A%20%5B%7B%22src%22%3A%20%22https%3A//sickoseb.github.io/randys-live/icon-192.png%22%2C%20%22sizes%22%3A%20%22192x192%22%2C%20%22type%22%3A%20%22image/png%22%7D%2C%20%7B%22src%22%3A%20%22https%3A//sickoseb.github.io/randys-live/icon-512.png%22%2C%20%22sizes%22%3A%20%22512x512%22%2C%20%22type%22%3A%20%22image/png%22%2C%20%22purpose%22%3A%20%22any%22%7D%5D%7D">
-<link rel="apple-touch-icon" href="https://sickoseb.github.io/randys-live/icon-192.png">
-<meta name="apple-mobile-web-app-title" content="Team">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="mobile-web-app-capable" content="yes">
 </head>
@@ -4585,7 +4587,11 @@ function fahrzeugName(fid) {
 function fahrerImDienst() {
   return MG.db.fahrer.filter(function (f) {
     var m = mitarbeiterVon(f.id);
-    return f.imDienstSeit || (m && m.eingestempelt);
+    if (f.imDienstSeit) return true;
+    if (!m || !m.eingestempelt) return false;
+    /* Eingestempelt mit anderer Position (z. B. Kasse): bekommt keine Touren */
+    var p = typeof positionVon === 'function' ? positionVon(m) : null;
+    return !p || p === 'fahrer';
   });
 }
 
@@ -4814,7 +4820,8 @@ function lieferLage(b) {
    Wer ist gerade im Haus? — Grundlage für die Empfehlung
    ============================================================ */
 
-/** Alle, die jetzt eingestempelt sind, mit ihrer Station laut Schichtplan. */
+/** Alle, die jetzt eingestempelt sind, mit ihrer Station: die beim Einstempeln
+    gewählte Position, sonst laut Schichtplan. Kasse = Schichtleitung. */
 function schichtLage() {
   var jetztMin = new Date().getHours() * 60 + new Date().getMinutes();
   function min(s) { var t = String(s || '0:00').split(':'); return Number(t[0]) * 60 + Number(t[1]); }
@@ -4825,18 +4832,24 @@ function schichtLage() {
     var schicht = MG.db.schichten.filter(function (s) {
       return s.mitarbeiter === m.id && s.tag === heute() && min(s.von) <= jetztMin + 30 && min(s.bis) >= jetztMin;
     })[0];
-    var station = schicht ? schicht.station : ((m.skills || [])[0] || 'kasse');
+    var position = typeof positionVon === 'function' ? positionVon(m) : null;
+    var station = position || (schicht ? schicht.station : ((m.skills || [])[0] || 'kasse'));
     var tour = meineTour(m.id);
     return {
-      m: m, station: station, schicht: schicht || null,
-      kannFahren: (m.skills || []).indexOf('fahrer') >= 0,
+      m: m, station: station, schicht: schicht || null, position: position,
+      /* Wer die Kasse führt, wird nicht auf Tour geschickt */
+      kannFahren: position === 'fahrer' || (position !== 'kasse' && (m.skills || []).indexOf('fahrer') >= 0),
       unterwegs: tour.length > 0, stopps: tour.length
     };
   });
 
   var besetzung = {};
   leute.forEach(function (x) { besetzung[x.station] = (besetzung[x.station] || 0) + 1; });
-  return { leute: leute, besetzung: besetzung, anzahl: leute.length };
+  var leiter = typeof schichtleiter === 'function' ? schichtleiter() : null;
+  return {
+    leute: leute, besetzung: besetzung, anzahl: leute.length,
+    schichtleiter: leiter, fahrer: leute.filter(function (x) { return x.position === 'fahrer'; }).length
+  };
 }
 
 /** Wartet gerade eine Lieferung auf eine Tour? */
@@ -4967,7 +4980,6 @@ function fahrerEmpfehlung() {
 
 /** Alter Name, damit die bestehenden Anzeigen weiterlaufen */
 function zweiterFahrer() { return fahrerEmpfehlung(); }
-
 
 /* ==== kern/13e_aufgaben.js ==== */
 /* ============================================================
@@ -6302,14 +6314,16 @@ function csvAus(name, zeilen) {
 function mitarbeiterVon(id2) { return MG.db.mitarbeiter.filter(function (m) { return m.id === id2; })[0] || null; }
 
 /** Stempeln — von der Kasse und aus der Mitarbeiter-App */
-function stempeln(m, art, still, ort) {
+function stempeln(m, art, still, ort, position) {
   if (art === 'kommt') {
     MG.db.zeiten.unshift({
       id: id('z'), mitarbeiter: m.id, start: jetzt(), ende: null, tag: heute(),
-      ortStart: ort || null, quelle: MG.app.k
+      ortStart: ort || null, quelle: MG.app.k, position: position || null
     });
     m.eingestempelt = true;
-    if (!still) chronik('personal', m.name + ' eingestempelt um ' + uhr(jetzt()) + ' (' + MG.app.titel + ')' + ortText(ort), m.nr);
+    if (position && typeof positionFolgen === 'function') positionFolgen(m, position, null);
+    if (!still) chronik('personal', m.name + ' eingestempelt um ' + uhr(jetzt()) + ' (' + MG.app.titel + ')' +
+      (position && typeof positionText === 'function' ? ' als ' + positionText(position) : '') + ortText(ort), m.nr);
   } else {
     var z = laufendeZeit(m);
     if (z) {
@@ -6318,6 +6332,9 @@ function stempeln(m, art, still, ort) {
       if (!still) chronik('personal', m.name + ' ausgestempelt — ' + zahl((z.ende - z.start) / 3600000, 2) + ' Stunden' + ortText(ort), m.nr);
     }
     m.eingestempelt = false;
+    /* Wer Feierabend macht, bekommt keine Touren mehr (eine offene Tour bleibt beim Fahrer) */
+    var f = typeof fahrerEintrag === 'function' ? fahrerEintrag(m.id) : null;
+    if (f && f.imDienstSeit && !(typeof meineTour === 'function' && meineTour(m.id).length) && typeof alsFahrerAbmelden === 'function') alsFahrerAbmelden(m);
   }
   sichern();
 }
@@ -6367,6 +6384,70 @@ var URLAUBSARTEN = {
   urlaub: 'Urlaub', ueberstunden: 'Überstundenabbau', sonderurlaub: 'Sonderurlaub',
   krank: 'Krank', unbezahlt: 'Unbezahlt frei'
 };
+
+/* ---------- Abwesenheiten: trägt nur die Filialleitung bzw. der Inhaber ein (16.11.2026) ----------
+   Mitarbeiter reichen nichts mehr selbst ein. Je Mitarbeiter und Zeitraum steht fest,
+   ob er krank, im Urlaub oder anderweitig abwesend war. Weitere Arten legt die Leitung
+   selbst an (einstellungen.abwesenheitsArten). Daraus die Statistik je Zeitraum. */
+function abwesenheitsArten() {
+  var a = {};
+  Object.keys(URLAUBSARTEN).forEach(function (k) { a[k] = URLAUBSARTEN[k]; });
+  ((MG.db.einstellungen && MG.db.einstellungen.abwesenheitsArten) || []).forEach(function (x) { if (x && x.k && x.t) a[x.k] = x.t; });
+  return a;
+}
+function abwesenheitsArtText(k) { return abwesenheitsArten()[k] || k; }
+/** Neue Art anlegen, z. B. „Kind krank“ oder „Berufsschule“ — gibt den Schlüssel zurück */
+function abwesenheitsArtAnlegen(text) {
+  text = String(text || '').trim();
+  if (!text) return null;
+  var arten = abwesenheitsArten();
+  var da = Object.keys(arten).filter(function (k) { return arten[k].toLowerCase() === text.toLowerCase(); })[0];
+  if (da) return da;
+  var k = 'a_' + text.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24);
+  var e = MG.db.einstellungen;
+  e.abwesenheitsArten = (e.abwesenheitsArten || []).concat([{ k: k, t: text }]);
+  return k;
+}
+/** Abwesenheit eintragen (Leitung) — gilt sofort, kein Antrag */
+function abwesenheitEintragen(m, von, bis, art, grund, wer) {
+  var a = {
+    id: id('u'), mitarbeiter: m.id, von: von, bis: bis, art: art || 'krank',
+    grund: grund || '', status: 'genehmigt', gestellt: jetzt(), tage: urlaubstage(von, bis),
+    eingetragen: true, eingetragenVon: wer || (MG.ich ? MG.ich.name : ''), entschieden: jetzt()
+  };
+  MG.db.urlaub.unshift(a);
+  chronik('personal', m.name + ': ' + abwesenheitsArtText(a.art) + ' ' + datum(new Date(von).getTime()) + ' – ' + datum(new Date(bis).getTime()) + ' eingetragen' + (a.eingetragenVon ? ' von ' + a.eingetragenVon : ''), m.nr);
+  sichern();
+  return a;
+}
+/** Kalendertage einer Abwesenheit innerhalb eines Zeitraums (Tage als 'YYYY-MM-DD') */
+function abwesenheitTageIn(u, von, bis) {
+  var a = u.von > von ? u.von : von, b = u.bis < bis ? u.bis : bis;
+  if (a > b) return 0;
+  return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000) + 1;
+}
+/**
+ * Statistik je Mitarbeiter im Zeitraum: Tage je Art, Fälle (Einträge) je Art.
+ * Gezählt werden Kalendertage — der Laden hat sieben Tage offen.
+ */
+function abwesenheitStatistik(von, bis) {
+  var arten = abwesenheitsArten();
+  var gilt = MG.db.urlaub.filter(function (u) { return u.status === 'genehmigt' && u.bis >= von && u.von <= bis; });
+  var zeilen = MG.db.mitarbeiter.map(function (m) {
+    var z = { m: m, tage: {}, faelle: {}, summe: 0 };
+    gilt.filter(function (u) { return u.mitarbeiter === m.id; }).forEach(function (u) {
+      var t = abwesenheitTageIn(u, von, bis);
+      z.tage[u.art] = (z.tage[u.art] || 0) + t;
+      z.faelle[u.art] = (z.faelle[u.art] || 0) + 1;
+      z.summe += t;
+    });
+    return z;
+  }).filter(function (z) { return z.m.aktiv !== false || z.summe > 0; });
+  var benutzt = Object.keys(arten).filter(function (k) { return zeilen.some(function (z) { return z.tage[k]; }); });
+  ['krank', 'urlaub'].forEach(function (k) { if (benutzt.indexOf(k) < 0) benutzt.unshift(k); });
+  benutzt.sort(function (a, b) { var r = { krank: 0, urlaub: 1 }; return (r[a] === undefined ? 2 : r[a]) - (r[b] === undefined ? 2 : r[b]); });
+  return { von: von, bis: bis, arten: benutzt, namen: arten, zeilen: zeilen };
+}
 function urlaubstage(von, bis) {
   var a = new Date(von), b = new Date(bis), n = 0;
   while (a <= b) { var w = a.getDay(); if (w !== 0) n++; a.setDate(a.getDate() + 1); }
@@ -6441,6 +6522,244 @@ function meineStunden(mId, von, bis) {
   };
 }
 
+/* ==== kern/14k_schicht.js ==== */
+/* ============================================================
+   MASTERS GASTRO — Schicht: wer steht heute wo
+   Beim Einstempeln wählt jeder seine Position für die Schicht.
+   Wer an der Kasse steht, führt die Schicht (Schichtleiter).
+   Fahrer stempeln sich als Fahrer ein und bekommen die Touren.
+   Die Position steht an der laufenden Stempelzeit (zeiten[].position),
+   damit Lieferzeit, Dispatch und Rückfragen sie lesen können.
+   ============================================================ */
+
+var POSITIONEN = [
+  { k: 'kasse', t: 'Kasse', zusatz: 'Schichtleitung', skill: 'kasse' },
+  { k: 'fahrer', t: 'Fahrer', zusatz: 'bekommt die Touren', skill: 'fahrer' },
+  { k: 'kueche', t: 'Küche / Belegen', skill: 'kueche' },
+  { k: 'ofen', t: 'Ofen', skill: 'ofen' },
+  { k: 'vorb', t: 'Vorbereitung', skill: 'vorb' },
+  { k: 'pack', t: 'Ausgabe', skill: 'pack' }
+];
+
+function positionText(k) {
+  var p = POSITIONEN.filter(function (x) { return x.k === k; })[0];
+  return p ? p.t + (p.k === 'kasse' ? ' · Schichtleitung' : '') : (k || '');
+}
+/** Position der laufenden Schicht, sonst null */
+function positionVon(m) {
+  var z = m ? laufendeZeit(m) : null;
+  return z && z.position ? z.position : null;
+}
+/** Inhaber und Filialleitung: dürfen jede Position nehmen und sehen das Backoffice */
+function istLeitung(m) {
+  return !!m && (m.rolle === 'administrator' || m.rolle === 'filialleitung');
+}
+/** Welche Positionen jemand wählen kann: nach seinen Stationen, Leitung alle */
+function positionenFuer(m) {
+  if (istLeitung(m)) return POSITIONEN.slice();
+  var sk = (m && m.skills) || [];
+  var l = POSITIONEN.filter(function (p) { return sk.indexOf(p.skill) >= 0; });
+  return l.length ? l : POSITIONEN.slice();
+}
+
+/** Länger offen als das gilt als vergessen auszustempeln (wie in mg_schicht_jetzt) */
+var SCHICHT_VERGESSEN_STD = 16;
+function zeitVergessen(z) { return !z.ende && jetzt() - z.start > SCHICHT_VERGESSEN_STD * 3600000; }
+/** Laufende Stempelzeiten mit Position */
+function laufendeMitPosition(k) {
+  return MG.db.zeiten.filter(function (z) {
+    if (z.ende || zeitVergessen(z) || (k && z.position !== k)) return false;
+    var m = mitarbeiterVon(z.mitarbeiter);
+    return m && m.aktiv !== false;
+  });
+}
+/** Wer führt gerade die Schicht? Wer zuletzt die Kasse übernommen hat. */
+function schichtleiter() {
+  var z = laufendeMitPosition('kasse').sort(function (a, b) { return (b.positionSeit || b.start) - (a.positionSeit || a.start); })[0];
+  return z ? mitarbeiterVon(z.mitarbeiter) : null;
+}
+function istSchichtleiter(m) { var s = schichtleiter(); return !!(s && m && s.id === m.id); }
+/** Eingestempelte Fahrer (Position Fahrer) */
+function fahrerGestempelt() {
+  return laufendeMitPosition('fahrer').map(function (z) { return mitarbeiterVon(z.mitarbeiter); });
+}
+
+/**
+ * Kurzfassung der Schicht für Anzeigen und Schnittstellen.
+ * Gleiches Ergebnis rechnet die Datenbank aus mg_bereich.zeiten.
+ */
+function schichtStand() {
+  var leiter = schichtleiter();
+  var lz = leiter ? laufendeZeit(leiter) : null;
+  var imDienst = MG.db.mitarbeiter.filter(function (m) { return m.aktiv !== false && laufendeZeit(m); });
+  var besetzung = {};
+  var leute = imDienst.map(function (m) {
+    var p = positionVon(m);
+    besetzung[p || 'ohne'] = (besetzung[p || 'ohne'] || 0) + 1;
+    return { id: m.id, name: m.name, position: p, seit: laufendeZeit(m).start };
+  });
+  var fahrer = fahrerGestempelt();
+  return {
+    leiter: leiter ? { id: leiter.id, name: leiter.name, seit: lz ? (lz.positionSeit || lz.start) : null } : null,
+    fahrer: fahrer.length, fahrerNamen: fahrer.map(function (m) { return m.name; }),
+    imDienst: leute.length, leute: leute, besetzung: besetzung
+  };
+}
+
+/* ---------- Position wählen (Team-App und Kasse) ---------- */
+/**
+ * o.dann(position), o.vorschlag, o.titel, o.wechsel (läuft schon eine Schicht)
+ */
+function positionDialog(m, o) {
+  o = o || {};
+  var leiter = schichtleiter();
+  var inn = el('div', { class: 'posWahl' });
+  var aktuell = positionVon(m);
+  var griff = null;
+  positionenFuer(m).forEach(function (p) {
+    var unter = p.zusatz || '';
+    if (p.k === 'kasse' && leiter && leiter.id !== m.id) unter = 'Führt gerade: ' + leiter.name.split(' ')[0] + ' · du übernimmst';
+    if (p.k === 'fahrer') { var n = fahrerGestempelt().filter(function (x) { return x.id !== m.id; }).length; if (n) unter = n + ' Fahrer im Dienst'; }
+    inn.appendChild(el('button', {
+      class: 'b posKnopf' + (p.k === (aktuell || o.vorschlag) ? ' p' : ''),
+      style: { width: '100%', justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '13px 15px', marginBottom: '8px', gap: '2px' },
+      onclick: function () { if (griff) griff.zu(); if (o.dann) o.dann(p.k); }
+    }, [
+      el('span', { style: { fontWeight: '800', fontSize: '15px' }, text: p.t }),
+      unter ? el('span', { class: 'klein', text: unter }) : null
+    ]));
+  });
+  griff = dialog({
+    titel: o.titel || (o.wechsel ? 'Position wechseln' : 'Wo stehst du heute?'), klasse: 'schmal', inhalt: inn,
+    knoepfe: [{ text: 'Abbrechen' }]
+  });
+}
+
+/** Position der laufenden Schicht ändern (z. B. Kasse übernehmen) */
+function positionSetzen(m, k, still) {
+  var z = laufendeZeit(m);
+  if (!z || z.position === k) return false;
+  var vorher = z.position || null;
+  z.position = k;
+  z.positionSeit = jetzt();
+  (z.wechsel = z.wechsel || []).push({ p: k, ab: jetzt() });
+  positionFolgen(m, k, vorher);
+  if (!still) chronik('personal', m.name + ' steht jetzt an: ' + positionText(k), m.nr);
+  sichern();
+  return true;
+}
+
+/** Was eine Position nach sich zieht: Fahrer in die Tourenliste, sonst raus */
+function positionFolgen(m, k, vorher) {
+  if (typeof fahrerEintrag !== 'function') return;
+  var f = fahrerEintrag(m.id);
+  if (k === 'fahrer') {
+    if (!f) MG.db.fahrer.push({ id: m.id, name: m.name, status: 'frei', tour: null, imDienstSeit: 0, fahrzeug: null });
+  } else if (vorher === 'fahrer' && f && f.imDienstSeit && !(typeof meineTour === 'function' && meineTour(m.id).length)) {
+    if (typeof alsFahrerAbmelden === 'function') alsFahrerAbmelden(m);
+  }
+}
+
+/* ---------- Lage jetzt: wo hakt es? (Inhaber, Filialleitung, Schichtleiter) ---------- */
+function betriebsLage() {
+  var t = jetzt();
+  var heuteB = MG.db.bestellungen.filter(function (b) {
+    return tagVon(b.angelegt) === heute() && b.status !== 'storniert' && b.status !== 'entwurf';
+  });
+  var offen = heuteB.filter(function (b) { return ['neu', 'produktion', 'bereit', 'unterwegs'].indexOf(b.status) >= 0; });
+  var imLaden = offen.filter(function (b) { return b.status !== 'unterwegs'; });
+  var spaet = offen.filter(function (b) { return b.zugesagt && t > b.zugesagt; })
+    .sort(function (a, b) { return a.zugesagt - b.zugesagt; });
+  var alter = imLaden.map(function (b) { return (t - (b.angelegt || t)) / 60000; });
+  var s = schichtStand();
+  var wartendLief = typeof wartendeLieferungen === 'function' ? wartendeLieferungen().filter(function (b) { return tagVon(b.angelegt) === heute(); }) : [];
+  var kl = (typeof KI !== 'undefined' && KI.lagebild) ? KI.lagebild() : null;
+  var fe = null;
+  try { fe = typeof fahrerEmpfehlung === 'function' ? fahrerEmpfehlung() : null; } catch (e) { fe = null; }
+
+  var punkte = [];
+  if (spaet.length) punkte.push({ art: 'rot', text: spaet.length + ' Bestellung' + (spaet.length > 1 ? 'en' : '') + ' über der zugesagten Zeit' });
+  if (alter.length && Math.max.apply(null, alter) > 45) punkte.push({ art: 'rot', text: 'Älteste offene Bestellung wartet seit ' + Math.round(Math.max.apply(null, alter)) + ' Min' });
+  if (wartendLief.length && !s.fahrer && !(typeof fahrerImDienst === 'function' && fahrerImDienst().length)) punkte.push({ art: 'rot', text: wartendLief.length + ' Lieferung' + (wartendLief.length > 1 ? 'en' : '') + ' offen, kein Fahrer im Dienst' });
+  else if (fe && fe.noetig) punkte.push({ art: 'ge', text: 'Zweiter Fahrer nötig · ' + fe.wartend + ' Lieferungen warten' });
+  if (!s.leiter && (s.imDienst || offen.length)) punkte.push({ art: 'ge', text: 'Niemand an der Kasse eingestempelt, keine Schichtleitung' });
+  var ohne = s.besetzung.ohne || 0;
+  if (ohne) punkte.push({ art: '', text: ohne + ' im Dienst ohne Position' });
+  if (kl && kl.auslastung > 95) punkte.push({ art: 'ge', text: 'Küche am Anschlag (' + kl.auslastung + ' %)' });
+  MG.db.zeiten.filter(function (z) { return !z.ende && jetzt() - z.start > 14 * 3600000; }).forEach(function (z) {
+    var m = mitarbeiterVon(z.mitarbeiter);
+    punkte.push({ art: 'ge', text: (m ? m.name : 'Jemand') + ' ist seit ' + datum(z.start) + ' ' + uhr(z.start) + ' eingestempelt, vermutlich Ausstempeln vergessen' });
+  });
+
+  return {
+    offen: offen.length, imLaden: imLaden.length,
+    neu: offen.filter(function (b) { return b.status === 'neu'; }).length,
+    produktion: offen.filter(function (b) { return b.status === 'produktion'; }).length,
+    bereit: offen.filter(function (b) { return b.status === 'bereit'; }).length,
+    unterwegs: offen.filter(function (b) { return b.status === 'unterwegs'; }).length,
+    fertig: heuteB.filter(function (b) { return ['geliefert', 'abgeholt', 'fertig'].indexOf(b.status) >= 0; }).length,
+    spaet: spaet, wartenSchnitt: alter.length ? Math.round(summe(alter, function (x) { return x; }) / alter.length) : 0,
+    wartenMax: alter.length ? Math.round(Math.max.apply(null, alter)) : 0,
+    kuecheLeerMin: kl ? kl.minutenBisLeer : 0,
+    schicht: s, punkte: punkte,
+    ampel: punkte.some(function (p) { return p.art === 'rot'; }) ? 'rot' : punkte.some(function (p) { return p.art === 'ge'; }) ? 'ge' : 'gr'
+  };
+}
+
+/** Lagekarte für Handy und Backoffice — gleiche Darstellung überall */
+function lageAnzeige(o) {
+  o = o || {};
+  var l = betriebsLage();
+  var farbe = { rot: 'var(--rot)', ge: 'var(--ge)', gr: 'var(--gr)' };
+  var k = el('div', { class: (o.klasse || 'karte') + ' lageKarte', style: { borderLeft: '4px solid ' + farbe[l.ampel] } });
+  k.appendChild(el('div', { class: 'reihe', style: { gap: '8px', alignItems: 'center', marginBottom: '8px' } }, [
+    el('h3', { style: { margin: '0', flex: '1' }, text: o.titel || 'Lage jetzt' }),
+    el('span', { class: 'pill ' + l.ampel, text: l.ampel === 'gr' ? 'läuft' : l.ampel === 'ge' ? 'achten' : 'hakt' })
+  ]));
+  function zahlKasten(w, t, art) {
+    return el('div', { style: { flex: '1 1 0', minWidth: '62px', textAlign: 'center', padding: '8px 4px', borderRadius: '10px', background: 'var(--bg3)' } }, [
+      el('b', { style: { display: 'block', fontSize: '22px', color: art ? farbe[art] : '' }, text: String(w) }),
+      el('span', { class: 'klein', text: t })
+    ]);
+  }
+  k.appendChild(el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } }, [
+    zahlKasten(l.offen, 'offen'),
+    zahlKasten(l.wartenSchnitt + ' Min', 'Ø Wartezeit', l.wartenSchnitt > 35 ? 'rot' : l.wartenSchnitt > 25 ? 'ge' : ''),
+    zahlKasten(l.spaet.length, 'zu spät', l.spaet.length ? 'rot' : ''),
+    zahlKasten(l.schicht.imDienst, 'im Dienst')
+  ]));
+  if (l.punkte.length) {
+    l.punkte.forEach(function (p) {
+      k.appendChild(el('div', { class: 'klein', style: { padding: '3px 0', color: p.art ? farbe[p.art] : '' }, text: p.text }));
+    });
+  } else {
+    k.appendChild(el('div', { class: 'klein', text: 'Nichts hakt. ' + l.fertig + ' Bestellungen heute fertig.' }));
+  }
+  k.appendChild(el('div', { class: 'klein', style: { marginTop: '8px' }, text:
+    'In Arbeit ' + (l.neu + l.produktion) + ' · bereit ' + l.bereit + ' · unterwegs ' + l.unterwegs +
+    (l.kuecheLeerMin ? ' · Küche in ca. ' + l.kuecheLeerMin + ' Min leer' : '') }));
+  l.spaet.slice(0, 3).forEach(function (b) {
+    k.appendChild(el('div', { class: 'klein', style: { color: 'var(--rot)' }, text:
+      '#' + (b.tagesNr || b.nr) + ' · ' + (b.art === 'lieferung' ? 'Lieferung' : 'Abholung') + ' · ' + Math.round((jetzt() - b.zugesagt) / 60000) + ' Min über der Zusage' }));
+  });
+
+  var s = l.schicht;
+  var team = el('div', { style: { marginTop: '10px', borderTop: '1px solid var(--bg3)', paddingTop: '8px' } });
+  team.appendChild(el('div', { class: 'wertZeile', style: { display: 'flex', justifyContent: 'space-between', padding: '3px 0' } }, [
+    el('span', { text: 'Schichtleitung' }), el('b', { text: s.leiter ? s.leiter.name + ' · seit ' + uhr(s.leiter.seit) : 'niemand an der Kasse' })
+  ]));
+  team.appendChild(el('div', { class: 'wertZeile', style: { display: 'flex', justifyContent: 'space-between', padding: '3px 0' } }, [
+    el('span', { text: 'Fahrer' }), el('b', { text: s.fahrer ? s.fahrer + ' · ' + s.fahrerNamen.map(function (n) { return n.split(' ')[0]; }).join(', ') : 'keiner' })
+  ]));
+  s.leute.forEach(function (x) {
+    team.appendChild(el('div', { class: 'klein', style: { display: 'flex', justifyContent: 'space-between', padding: '2px 0' } }, [
+      el('span', { text: x.name }), el('span', { text: (x.position ? positionText(x.position).split(' · ')[0] : 'ohne Position') + ' · seit ' + uhr(x.seit) })
+    ]));
+  });
+  if (!s.leute.length) team.appendChild(el('div', { class: 'klein', text: 'Niemand eingestempelt.' }));
+  k.appendChild(team);
+  return k;
+}
 
 /* ==== kern/14d_diagramm.js ==== */
 /* ============================================================
@@ -8881,14 +9200,23 @@ function anmeldungReparieren() {
 function rolleDesMitarbeiters(m) {
   return (MG.db.rollen || []).filter(function (r) { return r.k === m.rolle; })[0] || null;
 }
+/**
+ * Backoffice und Verwaltung: nur der Inhaber (Administrator) und die Filialleitung.
+ * Feste Regel (Sebastian 16.11.2026) — gilt unabhängig davon, was unter
+ * Rollen & Rechte für andere Rollen eingestellt ist.
+ */
+var BACKOFFICE_ROLLEN = ['administrator', 'filialleitung'];
+function backofficeErlaubt(m) {
+  return !!m && m.aktiv !== false && BACKOFFICE_ROLLEN.indexOf(m.rolle) >= 0 && !!rolleDesMitarbeiters(m);
+}
 /** Darf diese Rolle die Anwendung überhaupt öffnen? */
 function darfApp(m, app) {
   var r = rolleDesMitarbeiters(m);
   if (!r) return false;
+  if (app === 'backoffice') return backofficeErlaubt(m);
   if (r.rechte === 'alle') return true;
   if (app === 'kasse' || app === 'telefon') return !!r.kasse;
   if (app === 'team') return !!r.app;
-  if (app === 'backoffice') return !!r.backoffice;
   return true;
 }
 function anmeldenMitPin(pin) {
@@ -8908,6 +9236,8 @@ function sitzungHerstellen() {
   var s = Sitzung.lies();
   if (!s.mitarbeiter) return null;
   var m = MG.db.mitarbeiter.filter(function (x) { return x.id === s.mitarbeiter && x.aktiv; })[0];
+  /* Eine gespeicherte Sitzung gilt nur, solange die Freigabe für diese Anwendung besteht */
+  if (m && MG.app && !darfApp(m, MG.app.k)) { m = null; delete s.mitarbeiter; Sitzung.schreib(s); }
   MG.ich = m || null;
   return MG.ich;
 }
@@ -9104,7 +9434,6 @@ function vollbild() {
   if (document.fullscreenElement) { document.exitFullscreen(); return; }
   if (e.requestFullscreen) e.requestFullscreen().catch(function () { });
 }
-
 
 /* ==== kern/17_konfig.js ==== */
 /* ============================================================
@@ -13074,16 +13403,19 @@ if (typeof kartenBild === 'function') {
 
 /* ==== team/50_team.js ==== */
 /* ============================================================
-   MASTERS GASTRO — Mitarbeiter-App
-   Stempeln mit Standort, Schichtplan, Stunden, Urlaub, Akte.
+   MASTERS GASTRO — Mitarbeiter-App (Randy's Pizza App)
+   Stempeln mit Position und Standort, Schichtplan, Stunden,
+   Lohnabrechnungen. Urlaub und Krankmeldung laufen nicht mehr
+   über die App (Sebastian 16.11.2026), sondern über die Leitung.
    ============================================================ */
 
-var Team = { seite: 'heute', unter: 'akte', ort: null, ortLaeuft: false };
+var Team = { seite: 'heute', unter: 'zeiten', ort: null, ortLaeuft: false };
+var TEAM_NAME = "Randy's Pizza App";
 
 function teamMalen(host) {
   if (!MG.ich) {
     var ps = pinSchirm({
-      titel: 'Mitarbeiter-App',
+      titel: TEAM_NAME,
       text: 'Deine PIN'
     });
     var appK = teamAppKnopf();
@@ -13093,22 +13425,38 @@ function teamMalen(host) {
     return;
   }
   var m = MG.ich;
-  if (Team.fuer !== m.id) { Team.fuer = m.id; Team.seite = m.rolle === 'fahrer' ? 'fahren' : 'heute'; }
+  if (Team.fuer !== m.id) {
+    Team.fuer = m.id;
+    Team.seite = (m.rolle === 'fahrer' || positionVon(m) === 'fahrer') ? 'fahren' : 'heute';
+    Team.unter = 'zeiten';
+    teamStandortPruefen(true);
+  }
   if (typeof fahrGpsAbgleich === 'function') fahrGpsAbgleich(m);
-  teamEinstiegEinmal(m);
   var w = el('div', { class: 'handy' });
 
+  var pos = positionVon(m);
   var kopf = el('div', { class: 'hkopf' });
   kopf.appendChild(el('div', { class: 'reihe' }, [
     el('div', { class: 'wachsen' }, [
+      el('div', { class: 'klein teamMarke', style: { fontWeight: '800', letterSpacing: '.04em', color: 'var(--rot)' }, text: "RANDY'S PIZZA" }),
       el('h1', { text: 'Hallo ' + m.name.split(' ')[0] }),
-      el('div', { class: 'klein', text: rolleText(m.rolle) + ' · ' + MG.db.betrieb.name })
+      el('div', { class: 'klein', text: (pos ? positionText(pos) : rolleText(m.rolle)) + ' · ' + (MG.db.betrieb.ort || MG.db.betrieb.name) })
     ]),
     el('button', { class: 'b klein', sym: 'info', title: 'Kurz erklärt', onclick: function () { teamEinstieg(m); } }),
     teamAppKnopf(),
     el('button', { class: 'b klein', text: 'Abmelden', onclick: function () { abmeldenPin(); neuMalen(); } })
   ]));
   w.appendChild(kopf);
+
+  /* Ohne Standort geht in der App nichts — erst freigeben */
+  if (Standort.zustand === 'aus') {
+    var sperre = el('div', { class: 'hinhalt' });
+    teamStandortSperre(sperre, m);
+    w.appendChild(sperre);
+    host.appendChild(w);
+    return;
+  }
+  teamEinstiegEinmal(m);
 
   var inhalt = el('div', { class: 'hinhalt' });
   if (Team.seite === 'filiale' && !teamLeitung(m)) Team.seite = 'heute';
@@ -13118,15 +13466,13 @@ function teamMalen(host) {
   else if (Team.seite === 'fahren') teamFahren(inhalt, m);
   else if (Team.seite === 'plan') teamPlan(inhalt, m);
   else if (Team.seite === 'akademie') teamAkademie(inhalt, m);
-  else if (Team.seite === 'zeiten') teamZeiten(inhalt, m);
-  else if (Team.seite === 'urlaub') teamUrlaub(inhalt, m);
-  else if (Team.seite === 'akte') teamAkte(inhalt, m);
+  else teamMeins(inhalt, m);
   w.appendChild(inhalt);
 
   var leiste = el('div', { class: 'hleiste' });
   var seiten = [
     ['heute', 'Dienst'], ['aufgaben', 'Aufgaben'], ['fahren', 'Fahren'],
-    ['plan', 'Plan'], ['akademie', 'Akademie'], ['akte', 'Meins']
+    ['plan', 'Plan'], ['akademie', 'Akademie'], ['meins', 'Meins']
   ];
   var offeneFahrt = meineTour(m.id).filter(function (b) { return !fahrErledigt(b); }).length;
   var offeneAuf = aufgabenVon(m.id, true).length;
@@ -13148,13 +13494,87 @@ function rolleText(k) {
   return r ? r.t : k;
 }
 
-/* ---------- Heute: Stempeln ---------- */
+/* ---------- Standort: muss an sein, wird beim Anmelden eingefordert ----------
+   Geprüft wird nur, ob der Standort freigegeben ist. Gespeichert wird er
+   weiterhin nur beim Stempeln und während einer Tour. */
+var Standort = { zustand: 'unbekannt', zuletzt: 0, laeuft: false, fehler: 0, recht: null };
+
+function teamStandortSetzen(neu) {
+  var alt = Standort.zustand;
+  Standort.zustand = neu;
+  Standort.zuletzt = jetzt();
+  if (alt !== neu && MG.ich) neuMalen();
+}
+function teamStandortPruefen(sofort) {
+  if (Standort.laeuft) return;
+  if (!sofort && jetzt() - Standort.zuletzt < 90000) return;
+  if (!navigator.geolocation) { teamStandortSetzen('aus'); return; }
+  Standort.laeuft = true;
+  /* Wo der Browser es kann, die Freigabe direkt beobachten */
+  if (!Standort.recht && navigator.permissions && navigator.permissions.query) {
+    try {
+      navigator.permissions.query({ name: 'geolocation' }).then(function (st) {
+        Standort.recht = st;
+        if (st.state === 'denied') teamStandortSetzen('aus');
+        st.onchange = function () {
+          if (st.state === 'denied') teamStandortSetzen('aus');
+          else { Standort.zuletzt = 0; teamStandortPruefen(true); }
+        };
+      }, function () { });
+    } catch (e) { }
+  }
+  navigator.geolocation.getCurrentPosition(function () {
+    Standort.laeuft = false; Standort.fehler = 0;
+    teamStandortSetzen('an');
+  }, function (e) {
+    Standort.laeuft = false;
+    /* 1 = abgelehnt, 2 = Ortung am Gerät aus; 3 = dauerte zu lange (kein Grund zu sperren) */
+    if (e.code === 1) { teamStandortSetzen('aus'); return; }
+    if (e.code === 2) { Standort.fehler++; if (Standort.fehler >= 2) teamStandortSetzen('aus'); else { Standort.zuletzt = 0; setTimeout(function () { teamStandortPruefen(true); }, 4000); } return; }
+    Standort.zuletzt = jetzt();
+  }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 60000 });
+}
+setInterval(function () { if (MG.ich) teamStandortPruefen(false); }, 60000);
+document.addEventListener('visibilitychange', function () { if (!document.hidden && MG.ich) teamStandortPruefen(true); });
+
+function teamStandortSperre(host, m) {
+  var ios = teamAppIos();
+  var k = el('div', { class: 'tkarte', style: { borderLeft: '4px solid var(--rot)' } });
+  k.appendChild(el('h2', { style: { margin: '2px 0 8px' }, text: 'Standort einschalten' }));
+  k.appendChild(el('div', { style: { marginBottom: '10px' }, text: 'Die App braucht deinen Standort zum Stempeln und für die Touren. Ohne Standortfreigabe geht es nicht weiter.' }));
+  var schritte = ios
+    ? ['Einstellungen öffnen', 'Datenschutz & Sicherheit · Ortungsdienste einschalten', 'Darunter Safari-Websites (oder die Randy\'s Pizza App) · „Beim Verwenden der App“', 'Zurück in die App und unten auf „Erneut prüfen“']
+    : ['Oben neben der Adresse auf das Schloss bzw. die Einstellungen tippen', 'Berechtigungen · Standort · „Zulassen“', 'Am Handy den Standort (Ortung) einschalten', 'Zurück in die App und unten auf „Erneut prüfen“'];
+  schritte.forEach(function (s, i) {
+    k.appendChild(el('div', { class: 'einZeile' }, [el('b', { text: String(i + 1) }), el('span', { text: s })]));
+  });
+  k.appendChild(el('button', {
+    class: 'grossknopf kommt', style: { marginTop: '14px' }, text: 'Erneut prüfen',
+    onclick: function () { Standort.fehler = 0; Standort.zustand = 'unbekannt'; teamStandortPruefen(true); neuMalen(); }
+  }));
+  k.appendChild(el('div', { class: 'klein', style: { marginTop: '10px' }, text: 'Gespeichert wird der Standort nur beim Ein- und Ausstempeln und während einer Tour.' }));
+  host.appendChild(k);
+}
+
+/* ---------- Heute: Stempeln mit Position ---------- */
 function teamHeute(host, m) {
-  if (teamLeitung(m)) host.appendChild(teamFilialKarte(m));
+  if (teamLeitung(m)) {
+    var lk = lageAnzeige({ klasse: 'tkarte', titel: 'Meine Filiale · jetzt' });
+    lk.style.cursor = 'pointer';
+    lk.onclick = function () { Team.seite = 'filiale'; neuMalen(); };
+    host.appendChild(lk);
+  }
   var laufend = laufendeZeit(m);
+  var pos = positionVon(m);
   var box = el('div', { class: 'stempelBox' });
   box.appendChild(el('div', { class: 'stempelZeit', 'data-uhr': '1', text: uhrS(jetzt()) }));
   box.appendChild(el('div', { class: 'stempelStatus', text: laufend ? 'Im Dienst seit ' + uhr(laufend.start) + '  ·  ' + zahl((jetzt() - laufend.start) / 3600000, 2) + ' Std' : 'Nicht eingestempelt' }));
+  if (laufend) {
+    box.appendChild(el('div', { class: 'reihe', style: { justifyContent: 'center', gap: '8px', margin: '2px 0 10px' } }, [
+      el('span', { class: 'pill ' + (pos ? 'gr' : 'ge'), text: pos ? positionText(pos) : 'ohne Position' }),
+      el('button', { class: 'b klein', text: pos ? 'Wechseln' : 'Position wählen', onclick: function () { teamPositionWechseln(m); } })
+    ]));
+  }
   box.appendChild(el('button', {
     class: 'grossknopf ' + (laufend ? 'geht' : 'kommt'),
     disabled: Team.ortLaeuft ? 'disabled' : null,
@@ -13169,6 +13589,15 @@ function teamHeute(host, m) {
   box.appendChild(el('div', { class: 'ortZeile', text: ortText }));
   host.appendChild(box);
 
+  /* Wer führt heute? */
+  var s = schichtStand();
+  var ks0 = el('div', { class: 'tkarte' });
+  ks0.appendChild(el('h3', { text: 'Schicht jetzt' }));
+  ks0.appendChild(zeileWert('Schichtleitung', s.leiter ? s.leiter.name : 'noch niemand an der Kasse'));
+  ks0.appendChild(zeileWert('Fahrer im Dienst', String(s.fahrer)));
+  ks0.appendChild(zeileWert('Im Dienst', String(s.imDienst)));
+  host.appendChild(ks0);
+
   var heuteZeiten = MG.db.zeiten.filter(function (z) { return z.mitarbeiter === m.id && z.tag === heute(); });
   var stdHeute = summe(heuteZeiten, function (z) { return ((z.ende || jetzt()) - z.start) / 3600000; });
   var stdWoche = stundenVon(m, wocheStart());
@@ -13177,7 +13606,6 @@ function teamHeute(host, m) {
   k.appendChild(zeileWert('Heute', zahl(stdHeute, 2) + ' Std'));
   k.appendChild(zeileWert('Diese Woche', zahl(stdWoche, 2) + ' von ' + sollWoche(m) + ' Std'));
   k.appendChild(zeileWert('Überstunden', (m.ueberstunden > 0 ? '+' : '') + zahl(m.ueberstunden || 0, 2) + ' Std'));
-  k.appendChild(zeileWert('Resturlaub', urlaubRest(m) + ' Tage'));
   host.appendChild(k);
 
   var meineSchicht = MG.db.schichten.filter(function (s) { return s.mitarbeiter === m.id && s.tag === heute(); });
@@ -13188,7 +13616,7 @@ function teamHeute(host, m) {
     ks.appendChild(el('div', { class: 'schichtZeile' }, [
       el('div', { class: 'wachsen' }, [
         el('div', { style: { fontWeight: '700' }, text: s.von + ' – ' + s.bis }),
-        el('div', { class: 'klein', text: (STATIONEN[s.station] || { t: s.station }).t })
+        el('div', { class: 'klein', text: stationName(s.station) })
       ])
     ]));
   });
@@ -13209,26 +13637,60 @@ function teamHeute(host, m) {
 }
 function zeileWert(t, w) { return el('div', { class: 'wertZeile' }, [el('span', { text: t }), el('b', { text: w })]); }
 
-function teamStempeln(m, art) {
+/** Welche Position die Auswahl vorschlägt: laut Schichtplan, Fahrer bei Fahrern */
+function teamPositionVorschlag(m) {
+  var s = MG.db.schichten.filter(function (x) { return x.mitarbeiter === m.id && x.tag === heute(); })[0];
+  if (s && s.station) return s.station;
+  if (m.rolle === 'fahrer') return 'fahrer';
+  return null;
+}
+
+function teamStempeln(m, art, position) {
+  if (art === 'kommt' && !position) {
+    positionDialog(m, { vorschlag: teamPositionVorschlag(m), dann: function (p) { teamStempeln(m, 'kommt', p); } });
+    return;
+  }
   Team.ortLaeuft = true;
   neuMalen();
   standortHolen().then(function (ort) {
     Team.ort = ort;
     Team.ortLaeuft = false;
+    if (!ort.ok) {
+      if (/abgelehnt/.test(ort.grund || '')) teamStandortSetzen('aus');
+      melde('Ohne Standort kein Stempeln. Bitte den Standort für diese App einschalten.', 'rot');
+      neuMalen();
+      return;
+    }
+    teamStandortSetzen('an');
     var a = amBetrieb(ort);
-    if (MG.db.einstellungen.stempelGpsPflicht && !ort.ok) {
-      melde('Standort ist aus. Bitte den Standort für diese App einschalten, sonst ist Stempeln nicht möglich.', 'rot');
+    if (MG.db.einstellungen.stempelGpsPflicht && a && !a.drin) {
+      melde('Stempeln nur am Betrieb möglich (' + a.meter + ' m entfernt)', 'rot');
       neuMalen();
       return;
     }
-    if (MG.db.einstellungen.stempelGpsPflicht && (!ort.ok || (a && !a.drin))) {
-      melde('Stempeln nur am Betrieb möglich' + (a ? ' (' + a.meter + ' m entfernt)' : ''), 'rot');
-      neuMalen();
-      return;
+    var vorherLeiter = art === 'kommt' && position === 'kasse' ? schichtleiter() : null;
+    stempeln(m, art, false, ort, art === 'kommt' ? position : null);
+    if (art === 'kommt') {
+      melde('Eingestempelt um ' + uhr(jetzt()) + ' als ' + positionText(position) +
+        (vorherLeiter && vorherLeiter.id !== m.id ? ' — du übernimmst von ' + vorherLeiter.name.split(' ')[0] : ''), 'gr');
+      if (position === 'fahrer') Team.seite = 'fahren';
+    } else {
+      melde('Ausgestempelt um ' + uhr(jetzt()), 'gr');
     }
-    stempeln(m, art, false, ort);
-    melde(art === 'kommt' ? 'Eingestempelt um ' + uhr(jetzt()) : 'Ausgestempelt um ' + uhr(jetzt()), 'gr');
     neuMalen();
+  });
+}
+
+function teamPositionWechseln(m) {
+  positionDialog(m, {
+    wechsel: true, dann: function (p) {
+      var vorherLeiter = p === 'kasse' ? schichtleiter() : null;
+      if (!positionSetzen(m, p)) return;
+      melde('Du stehst jetzt an: ' + positionText(p) +
+        (vorherLeiter && vorherLeiter.id !== m.id ? ' — du übernimmst von ' + vorherLeiter.name.split(' ')[0] : ''), 'gr');
+      if (p === 'fahrer') Team.seite = 'fahren';
+      neuMalen();
+    }
   });
 }
 
@@ -13243,7 +13705,7 @@ function teamPlan(host, m) {
       var tg = tagVon(d.getTime());
       var meine = MG.db.schichten.filter(function (s) { return s.mitarbeiter === m.id && s.tag === tg; });
       var urlaub = MG.db.urlaub.filter(function (u) {
-        return u.mitarbeiter === m.id && u.status !== 'abgelehnt' && tg >= u.von && tg <= u.bis;
+        return u.mitarbeiter === m.id && u.status === 'genehmigt' && tg >= u.von && tg <= u.bis;
       })[0];
       var z = el('div', { class: 'schichtZeile' + (meine.length ? '' : ' frei') });
       z.appendChild(el('div', { class: 'schichtTag' }, [
@@ -13252,14 +13714,13 @@ function teamPlan(host, m) {
       ]));
       if (urlaub) {
         z.appendChild(el('div', { class: 'wachsen' }, [
-          el('div', { style: { fontWeight: '700' }, text: artText(urlaub.art) }),
-          el('div', { class: 'klein', text: abwesendStatus(urlaub) })
+          el('div', { style: { fontWeight: '700' }, text: 'nicht eingeplant' })
         ]));
       } else if (meine.length) {
         z.appendChild(el('div', { class: 'wachsen' }, meine.map(function (s) {
           return el('div', null, [
             el('div', { style: { fontWeight: '700' }, text: s.von + ' – ' + s.bis }),
-            el('div', { class: 'klein', text: (STATIONEN[s.station] || { t: s.station }).t })
+            el('div', { class: 'klein', text: stationName(s.station) })
           ]);
         })));
       } else {
@@ -13269,6 +13730,24 @@ function teamPlan(host, m) {
       host.appendChild(z);
     })(i);
   }
+}
+
+
+/* ---------- Meins: nur Stunden und Lohnabrechnungen ---------- */
+function teamMeins(host, m) {
+  if (Team.unter !== 'lohn') Team.unter = 'zeiten';
+  var lohn = dokumenteVon(m).filter(function (d) { return d.art === 'abrechnung'; });
+  var neu = lohn.filter(function (d) { return !d.gelesen; }).length;
+  host.appendChild(el('div', { class: 'fhReiter' }, [
+    ['zeiten', 'Stunden'], ['lohn', 'Lohnabrechnungen']
+  ].map(function (x) {
+    return el('button', {
+      class: Team.unter === x[0] ? 'an' : '',
+      onclick: function () { Team.unter = x[0]; neuMalen(); }
+    }, [el('span', { text: x[1] }), x[0] === 'lohn' && neu ? el('span', { class: 'z', text: String(neu) }) : null]);
+  })));
+  if (Team.unter === 'lohn') teamLohn(host, m, lohn);
+  else teamZeiten(host, m);
 }
 
 /* ---------- Stunden ---------- */
@@ -13288,8 +13767,6 @@ function teamZeiten(host, m) {
   k2.appendChild(el('h3', { text: 'Konten' }));
   k2.appendChild(zeileWert('Diesen Monat', zahl(stdMonat, 2) + ' Std'));
   k2.appendChild(zeileWert('Überstundenkonto', (m.ueberstunden > 0 ? '+' : '') + zahl(m.ueberstunden || 0, 2) + ' Std'));
-  k2.appendChild(zeileWert('Stundenlohn', m.lohn ? eur(m.lohn) : '—'));
-  k2.appendChild(zeileWert('Verdienst diesen Monat', eur(stdMonat * (m.lohn || 0))));
   host.appendChild(k2);
 
   var k3 = el('div', { class: 'tkarte' });
@@ -13304,217 +13781,33 @@ function teamZeiten(host, m) {
         el('span', { class: 'wachsen klein', text: uhr(z.start) + ' – ' + (z.ende ? uhr(z.ende) : 'läuft') }),
         el('b', { class: 'mono', text: zahl(((z.ende || jetzt()) - z.start) / 3600000, 2) + ' Std' })
       ]),
-      el('div', { class: 'klein', text: (z.quelle === 'team' ? 'Handy' : 'Kasse') + (ortStart ? ' · ' + (ortStart.drin ? 'am Betrieb' : ortStart.meter + ' m entfernt') : '') })
+      el('div', { class: 'klein', text: (z.position ? positionText(z.position).split(' · ')[0] + ' · ' : '') + (z.quelle === 'team' ? 'Handy' : 'Kasse') + (ortStart ? ' · ' + (ortStart.drin ? 'am Betrieb' : ortStart.meter + ' m entfernt') : '') })
     ]));
   });
   host.appendChild(k3);
 }
 
-/* ---------- Urlaub ---------- */
-function teamUrlaub(host, m) {
-  var rest = urlaubRest(m);
-  var kn = el('div', { class: 'tkarte' });
-  kn.appendChild(el('h3', { text: 'Wann kannst du nicht?' }));
-  kn.appendChild(el('div', { class: 'klein', style: { marginBottom: '10px' },
-    text: (BESCHAEFTIGUNG[beschaeftigung(m)] || beschaeftigung(m)) + ' · ' + sollWoche(m) + ' Std je Woche' }));
-  kn.appendChild(el('button', { class: 'b p', style: { width: '100%' }, text: 'Kann nicht eintragen', onclick: function () { kannNichtDialog(m); } }));
-  host.appendChild(kn);
-  if (!darfUrlaub(m)) {
-    host.appendChild(el('div', { class: 'tkarte' }, [
-      el('button', { class: 'b', style: { width: '100%' }, text: 'Krank melden', onclick: function () { krankDialog(m); } })
-    ]));
-  }
+/* ---------- Lohnabrechnungen ---------- */
+function teamLohn(host, m, lohn) {
   var k = el('div', { class: 'tkarte' });
-  k.appendChild(el('h3', { text: 'Urlaubskonto' }));
-  k.appendChild(el('div', { style: { fontSize: '30px', fontWeight: '900' }, text: rest + ' Tage' }));
-  k.appendChild(el('div', { class: 'balkenGross' }, el('i', { style: { width: (100 - rest / (m.urlaubstage || 28) * 100) + '%' } })));
-  k.appendChild(el('div', { class: 'klein', style: { marginTop: '6px' }, text: 'von ' + (m.urlaubstage || 28) + ' Tagen im Jahr' }));
-  k.appendChild(el('div', { class: 'zeile', style: { marginTop: '11px' } }, [
-    el('button', { class: 'b p', style: { flex: '1' }, text: 'Urlaub beantragen', onclick: function () { urlaubDialog(m); } }),
-    el('button', {
-      class: 'b', style: { flex: '1' }, text: 'Krank melden',
-      onclick: function () { krankDialog(m); }
-    })
-  ]));
-  if (darfUrlaub(m)) host.appendChild(k);
-
-  var meine = MG.db.urlaub.filter(function (u) { return u.mitarbeiter === m.id; });
-  var k2 = el('div', { class: 'tkarte' });
-  k2.appendChild(el('h3', { text: 'Meine Einträge' }));
-  if (!meine.length) k2.appendChild(el('div', { class: 'klein', text: 'Noch nichts eingetragen.' }));
-  meine.forEach(function (u) {
-    k2.appendChild(el('div', { class: 'urlaubZeile ' + u.status }, [
-      el('div', { class: 'reihe' }, [
-        el('b', { text: artText(u.art) }),
-        el('span', { class: 'pill ' + (u.status === 'genehmigt' ? 'gr' : u.status === 'abgelehnt' ? 'rot' : 'ge'), style: { marginLeft: 'auto' }, text: u.status === 'offen' ? 'in Prüfung' : u.status === 'genehmigt' ? (u.art === 'kannnicht' ? 'eingetragen' : 'genehmigt') : 'abgelehnt' })
-      ]),
-      el('div', { class: 'klein', style: { marginTop: '3px' }, text: datum(new Date(u.von).getTime()) + ' – ' + datum(new Date(u.bis).getTime()) + '  ·  ' + u.tage + ' Tag(e)' }),
-      u.grund ? el('div', { class: 'klein', text: u.grund }) : null,
-      u.antwort ? el('div', { class: 'klein', style: { marginTop: '4px' }, text: u.antwort }) : null,
-      u.gegenvorschlag ? el('div', { style: { marginTop: '7px' } }, [
-        el('div', { class: 'pill bl', text: 'Gegenvorschlag: ' + datum(new Date(u.gegenvorschlag.von).getTime()) + ' – ' + datum(new Date(u.gegenvorschlag.bis).getTime()) }),
-        el('button', {
-          class: 'b klein gr', style: { marginTop: '6px' }, text: 'Gegenvorschlag annehmen',
-          onclick: function () {
-            u.von = u.gegenvorschlag.von; u.bis = u.gegenvorschlag.bis;
-            u.tage = urlaubstage(u.von, u.bis); u.status = 'genehmigt';
-            delete u.gegenvorschlag;
-            chronik('personal', m.name + ' hat den Gegenvorschlag angenommen', m.nr);
-            sichern(); neuMalen();
-          }
-        })
-      ]) : null
-    ]));
-  });
-  host.appendChild(k2);
-}
-
-/* ---------- Kann nicht: Tage, an denen jemand nicht arbeiten kann ----------
-   Kein Antrag: ist an dem Tag noch keine Schicht geplant, gilt der Eintrag sofort
-   und die Schichtplanung lässt den Tag frei. Ist schon eine Schicht geplant,
-   entscheidet die Schichtleitung. */
-var BESCHAEFTIGUNG = { vollzeit: 'Vollzeit', teilzeit: 'Teilzeit', minijob: 'Minijob', aushilfe: 'Aushilfe' };
-function beschaeftigung(m) { return m.beschaeftigung || (sollWoche(m) >= 35 ? 'vollzeit' : 'teilzeit'); }
-function darfUrlaub(m) { return beschaeftigung(m) !== 'aushilfe'; }
-function artText(a) { return a === 'kannnicht' ? 'Kann nicht' : (URLAUBSARTEN[a] || a); }
-function abwesendStatus(u) {
-  if (u.art === 'kannnicht') return u.status === 'offen' ? 'eingetragen, Schicht war geplant · in Prüfung' : 'eingetragen';
-  return u.status === 'offen' ? 'beantragt, noch nicht entschieden' : 'genehmigt';
-}
-function kannNichtDialog(m) {
-  var inn = el('div');
-  var morgen = tagVon(tagPlus(1));
-  inn.appendChild(el('div', { class: 'zeile' }, [feld('Von', 'von', morgen, { typ: 'date' }), feld('Bis', 'bis', morgen, { typ: 'date' })]));
-  inn.appendChild(feld('Grund', 'grund', '', { platz: 'freiwillig, z. B. Schule, Termin' }));
-  dialog({
-    titel: 'Kann nicht', inhalt: inn,
-    knoepfe: [{ text: 'Abbrechen' }, {
-      text: 'Eintragen', art: 'p', tun: function (box) {
-        var w = werte(box);
-        if (!w.von || !w.bis || w.bis < w.von) { melde('Bitte einen gültigen Zeitraum wählen.', 'rot'); return false; }
-        if (w.von < heute()) { melde('Vergangene Tage lassen sich nicht eintragen.', 'rot'); return false; }
-        var geplant = MG.db.schichten.filter(function (x) { return x.mitarbeiter === m.id && x.tag >= w.von && x.tag <= w.bis; });
-        var a = urlaubAnlegen(m, w.von, w.bis, 'kannnicht', w.grund);
-        if (!geplant.length) { a.status = 'genehmigt'; sichern(); melde('Eingetragen — die Schichtplanung lässt dich frei.', 'gr'); }
-        else melde('Für ' + geplant.length + ' Tag' + (geplant.length > 1 ? 'e' : '') + ' bist du schon eingeteilt — die Schichtleitung entscheidet.', 'ge');
-        neuMalen();
-      }
-    }]
-  });
-}
-
-function urlaubDialog(m) {
-  var inn = el('div');
-  var vorlaufT = MG.db.einstellungen.urlaubVorlaufTage || 14;
-  var heuteD = tagVon(tagPlus(vorlaufT));
-  inn.appendChild(el('div', { class: 'klein', style: { marginBottom: '10px' },
-    text: 'Urlaub braucht ' + (MG.db.einstellungen.urlaubVorlaufTage || 14) + ' Tage Vorlauf. Krankmeldungen gehen jederzeit und landen sofort bei der Schichtleitung.' }));
-  inn.appendChild(feld('Art', 'art', 'urlaub', { art: 'auswahl', optionen: Object.keys(URLAUBSARTEN).map(function (k) { return { v: k, t: URLAUBSARTEN[k] }; }) }));
-  inn.appendChild(el('div', { class: 'zeile' }, [feld('Von', 'von', heuteD, { typ: 'date' }), feld('Bis', 'bis', heuteD, { typ: 'date' })]));
-  inn.appendChild(feld('Anmerkung', 'grund', '', { platz: 'optional' }));
-  dialog({
-    titel: 'Urlaub beantragen', inhalt: inn,
-    knoepfe: [{ text: 'Abbrechen' }, {
-      text: 'Antrag stellen', art: 'p', tun: function (box) {
-        var w = werte(box);
-        if (!w.von || !w.bis || w.bis < w.von) { melde('Bitte einen gültigen Zeitraum wählen.', 'rot'); return false; }
-        var tage = urlaubstage(w.von, w.bis);
-        var vorlauf = MG.db.einstellungen.urlaubVorlaufTage || 14;
-        var tageBis = Math.round((new Date(w.von + 'T00:00:00').getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
-        if (w.art === 'urlaub' && tageBis < vorlauf) {
-          melde('So kurzfristig geht das nicht: Urlaub braucht ' + vorlauf + ' Tage Vorlauf. Frühester Termin: ' +
-            datum(tagPlus(vorlauf)) + '. Für alles darunter bitte direkt mit der Schichtleitung sprechen.', 'rot');
-          return false;
-        }
-        if (w.art === 'urlaub' && tage > urlaubRest(m)) { melde('Dafür reicht der Resturlaub nicht (' + urlaubRest(m) + ' Tage).', 'rot'); return false; }
-        urlaubAnlegen(m, w.von, w.bis, w.art, w.grund);
-        melde(w.art === 'krank'
-          ? 'Krankmeldung ist raus — die Schichtleitung sieht sie sofort und plant um.'
-          : 'Antrag gestellt — die Personalverantwortliche sieht ihn sofort.', 'gr');
-        neuMalen();
-      }
-    }]
-  });
-}
-
-/** Krankmeldung — geht jederzeit und sofort an die Schichtleitung */
-function krankDialog(m) {
-  var inn = el('div');
-  inn.appendChild(el('div', { class: 'klein', style: { marginBottom: '10px' },
-    text: 'Die Schichtleitung sieht die Meldung sofort und plant um. Im Kalender steht danach „krankgemeldet".' }));
-  inn.appendChild(el('div', { class: 'zeile' }, [
-    feld('Von', 'von', heute(), { typ: 'date' }),
-    feld('Voraussichtlich bis', 'bis', heute(), { typ: 'date' })
-  ]));
-  inn.appendChild(feld('Anmerkung', 'grund', '', { platz: 'z. B. Attest folgt' }));
-  dialog({
-    titel: 'Krank melden', inhalt: inn, knoepfe: [
-      { text: 'Abbrechen', art: 'p' },
-      {
-        text: 'Krank melden', art: 'rot', tun: function (box) {
-          var w = werte(box);
-          if (!w.von || !w.bis || w.bis < w.von) { melde('Bitte einen gültigen Zeitraum wählen.', 'rot'); return false; }
-          urlaubAnlegen(m, w.von, w.bis, 'krank', w.grund);
-          melde('Gute Besserung — die Schichtleitung ist informiert.', 'gr');
-          neuMalen();
-        }
-      }
-    ]
-  });
-}
-
-/* ---------- Personalakte ---------- */
-function teamAkte(host, m) {
-  /* Zwei Unterseiten unter „Meins": Daten und Zeiten */
-  host.appendChild(el('div', { class: 'fhReiter' }, [
-    ['akte', 'Daten & Lohn'], ['zeiten', 'Stunden'], ['urlaub', 'Kann nicht']
-  ].map(function (x) {
-    return el('button', {
-      class: Team.unter === x[0] || (!Team.unter && x[0] === 'akte') ? 'an' : '',
-      onclick: function () { Team.unter = x[0]; neuMalen(); }
-    }, [el('span', { text: x[1] })]);
-  })));
-  if (Team.unter === 'zeiten') { teamZeiten(host, m); return; }
-  if (Team.unter === 'urlaub') { teamUrlaub(host, m); return; }
-
-  var k = el('div', { class: 'tkarte' });
-  k.appendChild(el('h3', { text: 'Meine Daten' }));
-  k.appendChild(zeileWert('Name', m.name));
-  k.appendChild(zeileWert('Personalnummer', m.nr));
-  k.appendChild(zeileWert('Rolle', rolleText(m.rolle)));
-  k.appendChild(zeileWert('E-Mail', m.mail));
-  k.appendChild(zeileWert('Im Betrieb seit', m.eintritt ? datum(m.eintritt) : '—'));
-  k.appendChild(zeileWert('Stationen', m.skills.map(function (s) { return stationsText(s); }).join(', ')));
-  host.appendChild(k);
-
-  var dok = dokumenteVon(m);
-  var offen = dok.filter(function (d) { return !d.gelesen; });
-  var k2 = el('div', { class: 'tkarte' });
-  k2.appendChild(el('h3', { text: 'Dokumente' + (offen.length ? '  ·  ' + offen.length + ' ungelesen' : '') }));
-  if (!dok.length) k2.appendChild(el('div', { class: 'klein', text: 'Noch keine Dokumente hinterlegt.' }));
-  var syms = { vertrag: '', abrechnung: '', belehrung: '', bescheinigung: '', sonstiges: '' };
-  dok.forEach(function (d) {
-    k2.appendChild(el('div', { class: 'dokZeile' }, [
-      el('span', { class: 'ds', text: syms[d.art] || '' }),
+  k.appendChild(el('h3', { text: 'Lohnabrechnungen' }));
+  if (!lohn.length) k.appendChild(el('div', { class: 'klein', text: 'Noch keine Lohnabrechnung hinterlegt.' }));
+  lohn.forEach(function (d) {
+    k.appendChild(el('div', { class: 'dokZeile' }, [
       el('div', { class: 'wachsen' }, [
         el('div', { style: { fontWeight: '700', fontSize: '13.5px' }, text: d.name }),
-        el('div', { class: 'klein', text: (DOKUMENTARTEN[d.art] || d.art) + ' · ' + datum(d.zeit) })
+        el('div', { class: 'klein', text: datum(d.zeit) })
       ]),
-      d.gelesen ? el('span', { class: 'pill gr', text: 'gelesen' })
-        : el('button', {
-          class: 'b klein p', text: 'Öffnen',
-          onclick: function () { d.gelesen = true; chronik('personal', m.name + ' hat "' + d.name + '" gelesen', m.nr); sichern(); dokZeigen(d); neuMalen(); }
-        })
+      el('button', {
+        class: 'b klein' + (d.gelesen ? '' : ' p'), text: 'Öffnen',
+        onclick: function () {
+          if (!d.gelesen) { d.gelesen = true; chronik('personal', m.name + ' hat "' + d.name + '" geöffnet', m.nr); sichern(); }
+          dokZeigen(d); neuMalen();
+        }
+      })
     ]));
   });
-  host.appendChild(k2);
-
-  var k3 = el('div', { class: 'tkarte' });
-  k3.appendChild(el('h3', { text: 'Qualifikation' }));
-  k3.appendChild(zeileWert('Personalakte', m.akteVollstaendig ? 'vollständig' : 'unvollständig'));
-  k3.appendChild(zeileWert('Systemtest', m.test ? m.test + ' %' : 'offen'));
-  k3.appendChild(zeileWert('Darf einarbeiten', (m.skills.length >= 3 && m.test >= 80) ? 'ja' : 'noch nicht'));
-  host.appendChild(k3);
+  host.appendChild(k);
 }
 
 function dokZeigen(d) {
@@ -13522,51 +13815,22 @@ function dokZeigen(d) {
     titel: d.name, inhalt: el('div', null, [
       el('div', { class: 'klein', style: { marginBottom: '10px' }, text: (DOKUMENTARTEN[d.art] || d.art) + ' vom ' + datum(d.zeit) }),
       d.datei
-        ? el('div', null, el('a', { class: 'b', href: d.datei, target: '_blank', text: 'Datei öffnen' }))
-        : el('div', { class: 'klein', text: 'Im Betrieb liegt hier die hinterlegte PDF aus der Personalakte. Solange keine Datei hochgeladen ist, steht nur der Eintrag.' })
+        ? el('div', null, el('a', { class: 'b', href: d.datei, target: '_blank', rel: 'noopener', text: 'Datei öffnen' }))
+        : el('div', { class: 'klein', text: 'Die Datei ist noch nicht hochgeladen. Bitte bei der Filialleitung melden.' })
     ]),
     knoepfe: [{ text: 'Schließen', art: 'p' }]
   });
 }
 
-/* ---------- Filiale: Überblick für die Leitung (Filialleiter, Schichtleitung, Inhaber) ---------- */
+/* ---------- Filiale: Überblick für Inhaber, Filialleitung und die Schichtleitung des Tages ---------- */
 function teamLeitung(m) {
-  var r = rolleDesMitarbeiters(m);
-  if (!r) return false;
-  return r.rechte === 'alle' || ['geschaeftsfuehrung', 'filialleitung', 'schichtleitung'].indexOf(m.rolle) >= 0 ||
-    (Array.isArray(r.rechte) && r.rechte.indexOf('schichtplan') >= 0);
+  return istLeitung(m) || istSchichtleiter(m) || m.rolle === 'schichtleitung';
 }
 function filialLage() {
-  var heuteB = MG.db.bestellungen.filter(function (b) { return tagVon(b.angelegt) === heute() && b.status !== 'storniert' && b.status !== 'entwurf'; });
   return {
     imDienst: MG.db.mitarbeiter.filter(function (x) { return x.aktiv && laufendeZeit(x); }),
-    inArbeit: heuteB.filter(function (b) { return ['neu', 'produktion', 'bereit'].indexOf(b.status) >= 0; }).length,
-    unterwegs: heuteB.filter(function (b) { return b.status === 'unterwegs'; }).length,
-    fertig: heuteB.filter(function (b) { return ['geliefert', 'abgeholt', 'fertig'].indexOf(b.status) >= 0; }).length,
-    antraege: MG.db.urlaub.filter(function (u) { return u.status === 'offen' && u.art !== 'krank'; }),
     krank: MG.db.urlaub.filter(function (u) { return u.art === 'krank' && u.status !== 'abgelehnt' && heute() >= u.von && heute() <= u.bis; })
   };
-}
-function filialZahl(wert, text, art) {
-  return el('div', { class: 'fiZahl ' + (art || '') }, [el('b', { text: String(wert) }), el('span', { text: text })]);
-}
-/** Kurzform oben auf „Dienst“ — ein Tipp öffnet die Filiale */
-function teamFilialKarte(m) {
-  var l = filialLage();
-  var hinweis = l.antraege.length ? l.antraege.length + ' Urlaubsantrag' + (l.antraege.length > 1 ? 'e' : '') + ' offen' : '';
-  return el('div', { class: 'tkarte fiKarte', onclick: function () { Team.seite = 'filiale'; neuMalen(); } }, [
-    el('div', { class: 'reihe' }, [
-      el('h3', { class: 'wachsen', style: { margin: '0' }, text: 'Meine Filiale · ' + (MG.db.betrieb.ort || MG.db.betrieb.name) }),
-      el('span', { class: 'klein', text: 'öffnen' })
-    ]),
-    el('div', { class: 'fiZahlen' }, [
-      filialZahl(l.imDienst.length, 'im Dienst'),
-      filialZahl(l.inArbeit, 'in Arbeit'),
-      filialZahl(l.unterwegs, 'unterwegs'),
-      filialZahl(l.krank.length, 'krank', l.krank.length ? 'ge' : '')
-    ]),
-    hinweis ? el('div', { class: 'klein', style: { marginTop: '8px', color: 'var(--ge)' }, text: hinweis }) : null
-  ]);
 }
 function minVon(hhmm) { var t = String(hhmm || '0:0').split(':'); return (+t[0] || 0) * 60 + (+t[1] || 0); }
 function teamFiliale(host, m) {
@@ -13576,15 +13840,10 @@ function teamFiliale(host, m) {
     el('button', { class: 'b klein', sym: 'zurueck', text: 'Dienst', onclick: function () { Team.seite = 'heute'; neuMalen(); } }),
     el('h2', { class: 'wachsen', style: { margin: '0' }, text: b.name + (b.ort ? ' ' + b.ort : '') })
   ]));
-  host.appendChild(el('div', { class: 'tkarte' }, [
-    el('h3', { text: 'Jetzt' }),
-    el('div', { class: 'fiZahlen' }, [
-      filialZahl(l.imDienst.length, 'im Dienst'),
-      filialZahl(l.inArbeit, 'in Arbeit'),
-      filialZahl(l.unterwegs, 'unterwegs'),
-      filialZahl(l.fertig, 'heute fertig')
-    ])
-  ]));
+  host.appendChild(lageAnzeige({ klasse: 'tkarte', titel: 'Lage jetzt · ' + uhr(jetzt()) }));
+  if (istLeitung(m)) {
+    host.appendChild(el('button', { class: 'b', style: { width: '100%', marginBottom: '12px' }, sym: 'einstellungen', text: 'Backoffice öffnen', onclick: function () { appOeffnen('backoffice'); } }));
+  }
 
   /* Fahrer — reicht einer oder braucht es einen zweiten? */
   var fe = fahrerEmpfehlung();
@@ -13598,7 +13857,7 @@ function teamFiliale(host, m) {
   });
   host.appendChild(kf);
 
-  /* Team heute: Schichtplan gegen Stempeluhr */
+  /* Team heute: Schichtplan gegen Stempeluhr, mit gewählter Position */
   var nun = new Date();
   var nunMin = nun.getHours() * 60 + nun.getMinutes();
   var schichten = MG.db.schichten.filter(function (s) { return s.tag === heute(); })
@@ -13613,65 +13872,62 @@ function teamFiliale(host, m) {
     gesehen[x.id] = true;
     var lz = laufendeZeit(x);
     var warDa = MG.db.zeiten.some(function (z) { return z.mitarbeiter === x.id && z.tag === heute(); });
-    var stand = lz ? ['im Dienst seit ' + uhr(lz.start), 'gr']
+    var stand = lz ? [(lz.position ? positionText(lz.position).split(' · ')[0] + ' · ' : '') + 'seit ' + uhr(lz.start), 'gr']
       : minVon(s.bis) <= nunMin ? [warDa ? 'Schicht vorbei' : 'nicht gekommen', warDa ? '' : 'rot']
       : minVon(s.von) <= nunMin ? [warDa ? 'ausgestempelt' : 'fehlt seit ' + s.von, warDa ? 'ge' : 'rot']
       : ['kommt ' + s.von, ''];
     kt.appendChild(el('div', { class: 'schichtZeile' }, [
       el('div', { class: 'wachsen' }, [
         el('div', { style: { fontWeight: '700' }, text: x.name }),
-        el('div', { class: 'klein', text: s.von + ' – ' + s.bis + ' · ' + (STATIONEN[s.station] || { t: s.station }).t })
+        el('div', { class: 'klein', text: s.von + ' – ' + s.bis + ' · ' + stationName(s.station) })
       ]),
       el('span', { class: 'pill ' + stand[1], text: stand[0] })
     ]));
   });
   l.imDienst.filter(function (x) { return !gesehen[x.id]; }).forEach(function (x) {
+    var lz = laufendeZeit(x);
     kt.appendChild(el('div', { class: 'schichtZeile frei' }, [
       el('div', { class: 'wachsen' }, [
         el('div', { style: { fontWeight: '700' }, text: x.name }),
         el('div', { class: 'klein', text: 'ohne Schicht eingestempelt' })
       ]),
-      el('span', { class: 'pill gr', text: 'seit ' + uhr(laufendeZeit(x).start) })
+      el('span', { class: 'pill gr', text: (lz.position ? positionText(lz.position).split(' · ')[0] + ' · ' : '') + 'seit ' + uhr(lz.start) })
     ]));
   });
   host.appendChild(kt);
 
-  /* Was auf die Leitung wartet */
-  var ko = el('div', { class: 'tkarte' });
-  ko.appendChild(el('h3', { text: 'Wartet auf dich' }));
-  if (!l.antraege.length && !l.krank.length) ko.appendChild(el('div', { class: 'klein', text: 'Nichts offen.' }));
-  l.krank.forEach(function (u) {
-    var x = mitarbeiterVon(u.mitarbeiter);
-    ko.appendChild(zeileWert((x ? x.name : '') + ' krank', 'bis ' + datum(new Date(u.bis).getTime())));
-  });
-  l.antraege.forEach(function (u) {
-    var x = mitarbeiterVon(u.mitarbeiter);
-    ko.appendChild(zeileWert((x ? x.name : '') + ' · ' + artText(u.art), datum(new Date(u.von).getTime()) + ' – ' + datum(new Date(u.bis).getTime())));
-  });
-  if (l.antraege.length) ko.appendChild(el('div', { class: 'klein', style: { marginTop: '8px' }, text: 'Entscheiden im Backoffice unter Urlaub & Krankmeldung. „Kann nicht“ ist offen, wenn an dem Tag schon eine Schicht geplant war.' }));
-  host.appendChild(ko);
+  if (l.krank.length && istLeitung(m)) {
+    var ko = el('div', { class: 'tkarte' });
+    ko.appendChild(el('h3', { text: 'Heute krank' }));
+    l.krank.forEach(function (u) {
+      var x = mitarbeiterVon(u.mitarbeiter);
+      ko.appendChild(zeileWert(x ? x.name : '', 'bis ' + datum(new Date(u.bis).getTime())));
+    });
+    host.appendChild(ko);
+  }
 }
 
 /* ---------- Kurz erklärt: einmal beim ersten Anmelden, danach über das Info-Zeichen ---------- */
 function teamEinstiegEinmal(m) {
-  var k = 'MG_TEAM_EINSTIEG_' + m.id;
+  var k = 'MG_TEAM_EINSTIEG2_' + m.id;
   if (Speicher.lies(k)) return;
   Speicher.schreib(k, String(jetzt()));
   setTimeout(function () { if (MG.ich && MG.ich.id === m.id) teamEinstieg(m); }, 0);
 }
 function teamEinstieg(m) {
   var zeilen = [
-    ['Dienst', 'Ein- und ausstempeln, dein Tag auf einen Blick.'],
-    ['Aufgaben', 'Was gerade zu tun ist — annehmen und erledigt melden.'],
-    ['Fahren', 'Fahrzeug nehmen — das stempelt dich ein. Randy sagt dir, was dran ist und wohin. Dein Standort wird nur während der Tour geteilt.'],
+    ['Dienst', 'Einstempeln und dabei deine Position wählen. Wer die Kasse nimmt, führt die Schicht. Fahrer stempeln als Fahrer und bekommen die Touren.'],
+    ['Standort', 'Muss in dieser App immer freigegeben sein. Gespeichert wird er nur beim Stempeln und während einer Tour.'],
+    ['Aufgaben', 'Was gerade zu tun ist: annehmen und erledigt melden.'],
+    ['Fahren', 'Fahrzeug nehmen, dann kommen die Touren aufs Handy. Randy sagt dir, was dran ist und wohin.'],
     ['Plan', 'Deine Schichten der nächsten 14 Tage.'],
     ['Akademie', 'Das System Stufe für Stufe lernen.'],
-    ['Meins', 'Deine Daten und Stunden. Unter „Kann nicht“ trägst du ein, wann du nicht arbeiten kannst, dazu Urlaub und krank melden.']
+    ['Meins', 'Deine Stunden und deine Lohnabrechnungen.']
   ];
   if (teamLeitung(m)) {
-    zeilen.unshift(['Meine Filiale', 'Oben auf „Dienst“: wer da ist, was läuft, ob ein zweiter Fahrer nötig ist, was auf dich wartet.']);
-    zeilen.push(['Backoffice', 'Schichtplan, Mitarbeiter und Urlaubsanträge bearbeitest du dort.']);
+    zeilen.unshift(['Meine Filiale', 'Oben auf „Dienst“: offene Bestellungen, Wartezeit, wer mit welcher Position da ist, wo es hakt.']);
   }
+  if (istLeitung(m)) zeilen.push(['Backoffice', 'Nur für Inhaber und Filialleitung: Schichtplan, Mitarbeiter, Urlaub und Krankmeldungen.']);
   qa('.dlg.einstieg').forEach(function (d) { if (d.parentNode) d.parentNode.remove(); });
   dialog({
     titel: 'Kurz erklärt', klasse: 'einstieg',
@@ -13683,7 +13939,7 @@ function teamEinstieg(m) {
 }
 
 /* ---------- Als App aufs Handy: Symbol auf dem Startbildschirm, Start im Vollbild ---------- */
-var TeamApp = { frage: null, logo: null, bereit: false };
+var TeamApp = { frage: null, bereit: false };
 
 function teamAppLaeuft() {
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
@@ -13711,54 +13967,29 @@ function teamAppAnlegen() {
   });
 }
 
-/** App-Symbol: Randys Logo auf Schwarz, darunter TEAM; rand = Sicherheitsabstand für runde Symbole (Android) */
-function teamAppSymbol(px, rand) {
-  var c = document.createElement('canvas');
-  c.width = c.height = px;
-  var g = c.getContext('2d');
-  g.fillStyle = '#070707';
-  g.fillRect(0, 0, px, px);
-  var b = TeamApp.logo;
-  var w = px * (rand ? 0.58 : 0.78), h = w * b.height / b.width;
-  var y = px * 0.42 - h / 2;
-  g.drawImage(b, (px - w) / 2, y, w, h);
-  g.fillStyle = '#ffffff';
-  g.font = '800 ' + Math.round(px * (rand ? 0.1 : 0.13)) + 'px sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText('TEAM', px / 2, y + h + px * 0.1);
-  return c.toDataURL('image/png');
-}
+/**
+ * Manifest und Symbol: im Betrieb liegen sie als Dateien neben der App
+ * (team.webmanifest, Randy's-Logo icon-192/512) und stehen im Kopf der Seite.
+ * Nur wenn der Kopf keines hat (Prüfbau), wird hier eines ergänzt.
+ */
 function teamAppKopf(tag, attr) {
   var e = document.createElement(tag);
   Object.keys(attr).forEach(function (k) { e.setAttribute(k, attr[k]); });
   document.head.appendChild(e);
 }
-/** Manifest und Symbole zur Laufzeit — die Anwendung bleibt eine einzige Datei */
 function teamAppVorbereiten() {
-  if (!/^https?:$/.test(location.protocol) || !document.head || typeof MARKE_LOGO !== 'string' || MARKE_LOGO.indexOf('data:') !== 0) return;
-  var b = new Image();
-  b.onload = function () {
-    try {
-      TeamApp.logo = b;
-      var adresse = location.href.split('#')[0].split('?')[0];
-      var manifest = {
-        id: adresse, name: 'MASTERS GASTRO Team', short_name: 'Team', lang: 'de',
-        start_url: adresse, scope: adresse, display: 'standalone', orientation: 'portrait',
-        background_color: '#070707', theme_color: '#070707',
-        icons: [
-          { src: teamAppSymbol(192), sizes: '192x192', type: 'image/png', purpose: 'any' },
-          { src: teamAppSymbol(512), sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: teamAppSymbol(512, true), sizes: '512x512', type: 'image/png', purpose: 'maskable' }
-        ]
-      };
-      teamAppKopf('link', { rel: 'apple-touch-icon', href: teamAppSymbol(180) });
-      teamAppKopf('meta', { name: 'apple-mobile-web-app-title', content: 'Team' });
-      teamAppKopf('meta', { name: 'apple-mobile-web-app-status-bar-style', content: 'black' });
-      teamAppKopf('link', { rel: 'manifest', href: URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' })) });
-    } catch (e) { /* ohne Symbol läuft die App wie bisher */ }
-  };
-  b.src = MARKE_LOGO;
+  if (!/^https?:$/.test(location.protocol) || !document.head) return;
+  if (document.querySelector('link[rel="manifest"]')) return;
+  try {
+    var adresse = location.href.split('#')[0].split('?')[0];
+    var manifest = {
+      id: adresse, name: TEAM_NAME, short_name: "Randy's Pizza", lang: 'de',
+      start_url: adresse, scope: adresse, display: 'standalone', orientation: 'portrait',
+      background_color: '#070707', theme_color: '#070707', icons: []
+    };
+    teamAppKopf('meta', { name: 'apple-mobile-web-app-title', content: "Randy's Pizza" });
+    teamAppKopf('link', { rel: 'manifest', href: URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' })) });
+  } catch (e) { /* ohne Manifest läuft die App wie bisher */ }
 }
 window.addEventListener('beforeinstallprompt', function (e) {
   e.preventDefault();
@@ -13767,13 +13998,12 @@ window.addEventListener('beforeinstallprompt', function (e) {
 });
 window.addEventListener('appinstalled', function () {
   TeamApp.frage = null;
-  melde('Team-App liegt auf dem Startbildschirm', 'gr');
+  melde("Randy's Pizza App liegt auf dem Startbildschirm", 'gr');
   if (TeamApp.bereit) neuMalen();
 });
 teamAppVorbereiten();
 
 appStart({ malen: teamMalen, takt: 10, beiPos: false, vorher: function () { TeamApp.bereit = true; } });
-
 
 /* ==== team/55_fahren.js ==== */
 /* ============================================================
@@ -14278,7 +14508,9 @@ function fahrzeugWahl(m) {
 
 /* ---------- Dienst: Einsteigen stempelt ein, Aussteigen fragt nach Feierabend ---------- */
 function fahrDienstStempel(m) {
-  if (!laufendeZeit(m)) teamStempeln(m, 'kommt');
+  /* Wer ein Fahrzeug nimmt, steht als Fahrer im Dienst */
+  if (!laufendeZeit(m)) teamStempeln(m, 'kommt', 'fahrer');
+  else if (positionVon(m) !== 'fahrer') positionSetzen(m, 'fahrer');
 }
 function fahrDienstEnde(m, offen) {
   if (offen.length) { melde('Erst die Tour abschließen — ' + offen.length + ' Stopp' + (offen.length > 1 ? 's' : '') + ' offen.', 'ge'); return; }
@@ -14374,7 +14606,6 @@ function gpsAus() {
   if (Fahren.gpsWatch !== null && navigator.geolocation) navigator.geolocation.clearWatch(Fahren.gpsWatch);
   Fahren.gpsWatch = null;
 }
-
 
 /* ==== team/57_aufgaben.js ==== */
 /* ============================================================

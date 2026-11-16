@@ -4550,7 +4550,11 @@ function fahrzeugName(fid) {
 function fahrerImDienst() {
   return MG.db.fahrer.filter(function (f) {
     var m = mitarbeiterVon(f.id);
-    return f.imDienstSeit || (m && m.eingestempelt);
+    if (f.imDienstSeit) return true;
+    if (!m || !m.eingestempelt) return false;
+    /* Eingestempelt mit anderer Position (z. B. Kasse): bekommt keine Touren */
+    var p = typeof positionVon === 'function' ? positionVon(m) : null;
+    return !p || p === 'fahrer';
   });
 }
 
@@ -4779,7 +4783,8 @@ function lieferLage(b) {
    Wer ist gerade im Haus? — Grundlage für die Empfehlung
    ============================================================ */
 
-/** Alle, die jetzt eingestempelt sind, mit ihrer Station laut Schichtplan. */
+/** Alle, die jetzt eingestempelt sind, mit ihrer Station: die beim Einstempeln
+    gewählte Position, sonst laut Schichtplan. Kasse = Schichtleitung. */
 function schichtLage() {
   var jetztMin = new Date().getHours() * 60 + new Date().getMinutes();
   function min(s) { var t = String(s || '0:00').split(':'); return Number(t[0]) * 60 + Number(t[1]); }
@@ -4790,18 +4795,24 @@ function schichtLage() {
     var schicht = MG.db.schichten.filter(function (s) {
       return s.mitarbeiter === m.id && s.tag === heute() && min(s.von) <= jetztMin + 30 && min(s.bis) >= jetztMin;
     })[0];
-    var station = schicht ? schicht.station : ((m.skills || [])[0] || 'kasse');
+    var position = typeof positionVon === 'function' ? positionVon(m) : null;
+    var station = position || (schicht ? schicht.station : ((m.skills || [])[0] || 'kasse'));
     var tour = meineTour(m.id);
     return {
-      m: m, station: station, schicht: schicht || null,
-      kannFahren: (m.skills || []).indexOf('fahrer') >= 0,
+      m: m, station: station, schicht: schicht || null, position: position,
+      /* Wer die Kasse führt, wird nicht auf Tour geschickt */
+      kannFahren: position === 'fahrer' || (position !== 'kasse' && (m.skills || []).indexOf('fahrer') >= 0),
       unterwegs: tour.length > 0, stopps: tour.length
     };
   });
 
   var besetzung = {};
   leute.forEach(function (x) { besetzung[x.station] = (besetzung[x.station] || 0) + 1; });
-  return { leute: leute, besetzung: besetzung, anzahl: leute.length };
+  var leiter = typeof schichtleiter === 'function' ? schichtleiter() : null;
+  return {
+    leute: leute, besetzung: besetzung, anzahl: leute.length,
+    schichtleiter: leiter, fahrer: leute.filter(function (x) { return x.position === 'fahrer'; }).length
+  };
 }
 
 /** Wartet gerade eine Lieferung auf eine Tour? */
@@ -4932,7 +4943,6 @@ function fahrerEmpfehlung() {
 
 /** Alter Name, damit die bestehenden Anzeigen weiterlaufen */
 function zweiterFahrer() { return fahrerEmpfehlung(); }
-
 
 /* ==== kern/13e_aufgaben.js ==== */
 /* ============================================================
@@ -6267,14 +6277,16 @@ function csvAus(name, zeilen) {
 function mitarbeiterVon(id2) { return MG.db.mitarbeiter.filter(function (m) { return m.id === id2; })[0] || null; }
 
 /** Stempeln — von der Kasse und aus der Mitarbeiter-App */
-function stempeln(m, art, still, ort) {
+function stempeln(m, art, still, ort, position) {
   if (art === 'kommt') {
     MG.db.zeiten.unshift({
       id: id('z'), mitarbeiter: m.id, start: jetzt(), ende: null, tag: heute(),
-      ortStart: ort || null, quelle: MG.app.k
+      ortStart: ort || null, quelle: MG.app.k, position: position || null
     });
     m.eingestempelt = true;
-    if (!still) chronik('personal', m.name + ' eingestempelt um ' + uhr(jetzt()) + ' (' + MG.app.titel + ')' + ortText(ort), m.nr);
+    if (position && typeof positionFolgen === 'function') positionFolgen(m, position, null);
+    if (!still) chronik('personal', m.name + ' eingestempelt um ' + uhr(jetzt()) + ' (' + MG.app.titel + ')' +
+      (position && typeof positionText === 'function' ? ' als ' + positionText(position) : '') + ortText(ort), m.nr);
   } else {
     var z = laufendeZeit(m);
     if (z) {
@@ -6283,6 +6295,9 @@ function stempeln(m, art, still, ort) {
       if (!still) chronik('personal', m.name + ' ausgestempelt — ' + zahl((z.ende - z.start) / 3600000, 2) + ' Stunden' + ortText(ort), m.nr);
     }
     m.eingestempelt = false;
+    /* Wer Feierabend macht, bekommt keine Touren mehr (eine offene Tour bleibt beim Fahrer) */
+    var f = typeof fahrerEintrag === 'function' ? fahrerEintrag(m.id) : null;
+    if (f && f.imDienstSeit && !(typeof meineTour === 'function' && meineTour(m.id).length) && typeof alsFahrerAbmelden === 'function') alsFahrerAbmelden(m);
   }
   sichern();
 }
@@ -6332,6 +6347,70 @@ var URLAUBSARTEN = {
   urlaub: 'Urlaub', ueberstunden: 'Überstundenabbau', sonderurlaub: 'Sonderurlaub',
   krank: 'Krank', unbezahlt: 'Unbezahlt frei'
 };
+
+/* ---------- Abwesenheiten: trägt nur die Filialleitung bzw. der Inhaber ein (16.11.2026) ----------
+   Mitarbeiter reichen nichts mehr selbst ein. Je Mitarbeiter und Zeitraum steht fest,
+   ob er krank, im Urlaub oder anderweitig abwesend war. Weitere Arten legt die Leitung
+   selbst an (einstellungen.abwesenheitsArten). Daraus die Statistik je Zeitraum. */
+function abwesenheitsArten() {
+  var a = {};
+  Object.keys(URLAUBSARTEN).forEach(function (k) { a[k] = URLAUBSARTEN[k]; });
+  ((MG.db.einstellungen && MG.db.einstellungen.abwesenheitsArten) || []).forEach(function (x) { if (x && x.k && x.t) a[x.k] = x.t; });
+  return a;
+}
+function abwesenheitsArtText(k) { return abwesenheitsArten()[k] || k; }
+/** Neue Art anlegen, z. B. „Kind krank“ oder „Berufsschule“ — gibt den Schlüssel zurück */
+function abwesenheitsArtAnlegen(text) {
+  text = String(text || '').trim();
+  if (!text) return null;
+  var arten = abwesenheitsArten();
+  var da = Object.keys(arten).filter(function (k) { return arten[k].toLowerCase() === text.toLowerCase(); })[0];
+  if (da) return da;
+  var k = 'a_' + text.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24);
+  var e = MG.db.einstellungen;
+  e.abwesenheitsArten = (e.abwesenheitsArten || []).concat([{ k: k, t: text }]);
+  return k;
+}
+/** Abwesenheit eintragen (Leitung) — gilt sofort, kein Antrag */
+function abwesenheitEintragen(m, von, bis, art, grund, wer) {
+  var a = {
+    id: id('u'), mitarbeiter: m.id, von: von, bis: bis, art: art || 'krank',
+    grund: grund || '', status: 'genehmigt', gestellt: jetzt(), tage: urlaubstage(von, bis),
+    eingetragen: true, eingetragenVon: wer || (MG.ich ? MG.ich.name : ''), entschieden: jetzt()
+  };
+  MG.db.urlaub.unshift(a);
+  chronik('personal', m.name + ': ' + abwesenheitsArtText(a.art) + ' ' + datum(new Date(von).getTime()) + ' – ' + datum(new Date(bis).getTime()) + ' eingetragen' + (a.eingetragenVon ? ' von ' + a.eingetragenVon : ''), m.nr);
+  sichern();
+  return a;
+}
+/** Kalendertage einer Abwesenheit innerhalb eines Zeitraums (Tage als 'YYYY-MM-DD') */
+function abwesenheitTageIn(u, von, bis) {
+  var a = u.von > von ? u.von : von, b = u.bis < bis ? u.bis : bis;
+  if (a > b) return 0;
+  return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000) + 1;
+}
+/**
+ * Statistik je Mitarbeiter im Zeitraum: Tage je Art, Fälle (Einträge) je Art.
+ * Gezählt werden Kalendertage — der Laden hat sieben Tage offen.
+ */
+function abwesenheitStatistik(von, bis) {
+  var arten = abwesenheitsArten();
+  var gilt = MG.db.urlaub.filter(function (u) { return u.status === 'genehmigt' && u.bis >= von && u.von <= bis; });
+  var zeilen = MG.db.mitarbeiter.map(function (m) {
+    var z = { m: m, tage: {}, faelle: {}, summe: 0 };
+    gilt.filter(function (u) { return u.mitarbeiter === m.id; }).forEach(function (u) {
+      var t = abwesenheitTageIn(u, von, bis);
+      z.tage[u.art] = (z.tage[u.art] || 0) + t;
+      z.faelle[u.art] = (z.faelle[u.art] || 0) + 1;
+      z.summe += t;
+    });
+    return z;
+  }).filter(function (z) { return z.m.aktiv !== false || z.summe > 0; });
+  var benutzt = Object.keys(arten).filter(function (k) { return zeilen.some(function (z) { return z.tage[k]; }); });
+  ['krank', 'urlaub'].forEach(function (k) { if (benutzt.indexOf(k) < 0) benutzt.unshift(k); });
+  benutzt.sort(function (a, b) { var r = { krank: 0, urlaub: 1 }; return (r[a] === undefined ? 2 : r[a]) - (r[b] === undefined ? 2 : r[b]); });
+  return { von: von, bis: bis, arten: benutzt, namen: arten, zeilen: zeilen };
+}
 function urlaubstage(von, bis) {
   var a = new Date(von), b = new Date(bis), n = 0;
   while (a <= b) { var w = a.getDay(); if (w !== 0) n++; a.setDate(a.getDate() + 1); }
@@ -6406,6 +6485,244 @@ function meineStunden(mId, von, bis) {
   };
 }
 
+/* ==== kern/14k_schicht.js ==== */
+/* ============================================================
+   MASTERS GASTRO — Schicht: wer steht heute wo
+   Beim Einstempeln wählt jeder seine Position für die Schicht.
+   Wer an der Kasse steht, führt die Schicht (Schichtleiter).
+   Fahrer stempeln sich als Fahrer ein und bekommen die Touren.
+   Die Position steht an der laufenden Stempelzeit (zeiten[].position),
+   damit Lieferzeit, Dispatch und Rückfragen sie lesen können.
+   ============================================================ */
+
+var POSITIONEN = [
+  { k: 'kasse', t: 'Kasse', zusatz: 'Schichtleitung', skill: 'kasse' },
+  { k: 'fahrer', t: 'Fahrer', zusatz: 'bekommt die Touren', skill: 'fahrer' },
+  { k: 'kueche', t: 'Küche / Belegen', skill: 'kueche' },
+  { k: 'ofen', t: 'Ofen', skill: 'ofen' },
+  { k: 'vorb', t: 'Vorbereitung', skill: 'vorb' },
+  { k: 'pack', t: 'Ausgabe', skill: 'pack' }
+];
+
+function positionText(k) {
+  var p = POSITIONEN.filter(function (x) { return x.k === k; })[0];
+  return p ? p.t + (p.k === 'kasse' ? ' · Schichtleitung' : '') : (k || '');
+}
+/** Position der laufenden Schicht, sonst null */
+function positionVon(m) {
+  var z = m ? laufendeZeit(m) : null;
+  return z && z.position ? z.position : null;
+}
+/** Inhaber und Filialleitung: dürfen jede Position nehmen und sehen das Backoffice */
+function istLeitung(m) {
+  return !!m && (m.rolle === 'administrator' || m.rolle === 'filialleitung');
+}
+/** Welche Positionen jemand wählen kann: nach seinen Stationen, Leitung alle */
+function positionenFuer(m) {
+  if (istLeitung(m)) return POSITIONEN.slice();
+  var sk = (m && m.skills) || [];
+  var l = POSITIONEN.filter(function (p) { return sk.indexOf(p.skill) >= 0; });
+  return l.length ? l : POSITIONEN.slice();
+}
+
+/** Länger offen als das gilt als vergessen auszustempeln (wie in mg_schicht_jetzt) */
+var SCHICHT_VERGESSEN_STD = 16;
+function zeitVergessen(z) { return !z.ende && jetzt() - z.start > SCHICHT_VERGESSEN_STD * 3600000; }
+/** Laufende Stempelzeiten mit Position */
+function laufendeMitPosition(k) {
+  return MG.db.zeiten.filter(function (z) {
+    if (z.ende || zeitVergessen(z) || (k && z.position !== k)) return false;
+    var m = mitarbeiterVon(z.mitarbeiter);
+    return m && m.aktiv !== false;
+  });
+}
+/** Wer führt gerade die Schicht? Wer zuletzt die Kasse übernommen hat. */
+function schichtleiter() {
+  var z = laufendeMitPosition('kasse').sort(function (a, b) { return (b.positionSeit || b.start) - (a.positionSeit || a.start); })[0];
+  return z ? mitarbeiterVon(z.mitarbeiter) : null;
+}
+function istSchichtleiter(m) { var s = schichtleiter(); return !!(s && m && s.id === m.id); }
+/** Eingestempelte Fahrer (Position Fahrer) */
+function fahrerGestempelt() {
+  return laufendeMitPosition('fahrer').map(function (z) { return mitarbeiterVon(z.mitarbeiter); });
+}
+
+/**
+ * Kurzfassung der Schicht für Anzeigen und Schnittstellen.
+ * Gleiches Ergebnis rechnet die Datenbank aus mg_bereich.zeiten.
+ */
+function schichtStand() {
+  var leiter = schichtleiter();
+  var lz = leiter ? laufendeZeit(leiter) : null;
+  var imDienst = MG.db.mitarbeiter.filter(function (m) { return m.aktiv !== false && laufendeZeit(m); });
+  var besetzung = {};
+  var leute = imDienst.map(function (m) {
+    var p = positionVon(m);
+    besetzung[p || 'ohne'] = (besetzung[p || 'ohne'] || 0) + 1;
+    return { id: m.id, name: m.name, position: p, seit: laufendeZeit(m).start };
+  });
+  var fahrer = fahrerGestempelt();
+  return {
+    leiter: leiter ? { id: leiter.id, name: leiter.name, seit: lz ? (lz.positionSeit || lz.start) : null } : null,
+    fahrer: fahrer.length, fahrerNamen: fahrer.map(function (m) { return m.name; }),
+    imDienst: leute.length, leute: leute, besetzung: besetzung
+  };
+}
+
+/* ---------- Position wählen (Team-App und Kasse) ---------- */
+/**
+ * o.dann(position), o.vorschlag, o.titel, o.wechsel (läuft schon eine Schicht)
+ */
+function positionDialog(m, o) {
+  o = o || {};
+  var leiter = schichtleiter();
+  var inn = el('div', { class: 'posWahl' });
+  var aktuell = positionVon(m);
+  var griff = null;
+  positionenFuer(m).forEach(function (p) {
+    var unter = p.zusatz || '';
+    if (p.k === 'kasse' && leiter && leiter.id !== m.id) unter = 'Führt gerade: ' + leiter.name.split(' ')[0] + ' · du übernimmst';
+    if (p.k === 'fahrer') { var n = fahrerGestempelt().filter(function (x) { return x.id !== m.id; }).length; if (n) unter = n + ' Fahrer im Dienst'; }
+    inn.appendChild(el('button', {
+      class: 'b posKnopf' + (p.k === (aktuell || o.vorschlag) ? ' p' : ''),
+      style: { width: '100%', justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '13px 15px', marginBottom: '8px', gap: '2px' },
+      onclick: function () { if (griff) griff.zu(); if (o.dann) o.dann(p.k); }
+    }, [
+      el('span', { style: { fontWeight: '800', fontSize: '15px' }, text: p.t }),
+      unter ? el('span', { class: 'klein', text: unter }) : null
+    ]));
+  });
+  griff = dialog({
+    titel: o.titel || (o.wechsel ? 'Position wechseln' : 'Wo stehst du heute?'), klasse: 'schmal', inhalt: inn,
+    knoepfe: [{ text: 'Abbrechen' }]
+  });
+}
+
+/** Position der laufenden Schicht ändern (z. B. Kasse übernehmen) */
+function positionSetzen(m, k, still) {
+  var z = laufendeZeit(m);
+  if (!z || z.position === k) return false;
+  var vorher = z.position || null;
+  z.position = k;
+  z.positionSeit = jetzt();
+  (z.wechsel = z.wechsel || []).push({ p: k, ab: jetzt() });
+  positionFolgen(m, k, vorher);
+  if (!still) chronik('personal', m.name + ' steht jetzt an: ' + positionText(k), m.nr);
+  sichern();
+  return true;
+}
+
+/** Was eine Position nach sich zieht: Fahrer in die Tourenliste, sonst raus */
+function positionFolgen(m, k, vorher) {
+  if (typeof fahrerEintrag !== 'function') return;
+  var f = fahrerEintrag(m.id);
+  if (k === 'fahrer') {
+    if (!f) MG.db.fahrer.push({ id: m.id, name: m.name, status: 'frei', tour: null, imDienstSeit: 0, fahrzeug: null });
+  } else if (vorher === 'fahrer' && f && f.imDienstSeit && !(typeof meineTour === 'function' && meineTour(m.id).length)) {
+    if (typeof alsFahrerAbmelden === 'function') alsFahrerAbmelden(m);
+  }
+}
+
+/* ---------- Lage jetzt: wo hakt es? (Inhaber, Filialleitung, Schichtleiter) ---------- */
+function betriebsLage() {
+  var t = jetzt();
+  var heuteB = MG.db.bestellungen.filter(function (b) {
+    return tagVon(b.angelegt) === heute() && b.status !== 'storniert' && b.status !== 'entwurf';
+  });
+  var offen = heuteB.filter(function (b) { return ['neu', 'produktion', 'bereit', 'unterwegs'].indexOf(b.status) >= 0; });
+  var imLaden = offen.filter(function (b) { return b.status !== 'unterwegs'; });
+  var spaet = offen.filter(function (b) { return b.zugesagt && t > b.zugesagt; })
+    .sort(function (a, b) { return a.zugesagt - b.zugesagt; });
+  var alter = imLaden.map(function (b) { return (t - (b.angelegt || t)) / 60000; });
+  var s = schichtStand();
+  var wartendLief = typeof wartendeLieferungen === 'function' ? wartendeLieferungen().filter(function (b) { return tagVon(b.angelegt) === heute(); }) : [];
+  var kl = (typeof KI !== 'undefined' && KI.lagebild) ? KI.lagebild() : null;
+  var fe = null;
+  try { fe = typeof fahrerEmpfehlung === 'function' ? fahrerEmpfehlung() : null; } catch (e) { fe = null; }
+
+  var punkte = [];
+  if (spaet.length) punkte.push({ art: 'rot', text: spaet.length + ' Bestellung' + (spaet.length > 1 ? 'en' : '') + ' über der zugesagten Zeit' });
+  if (alter.length && Math.max.apply(null, alter) > 45) punkte.push({ art: 'rot', text: 'Älteste offene Bestellung wartet seit ' + Math.round(Math.max.apply(null, alter)) + ' Min' });
+  if (wartendLief.length && !s.fahrer && !(typeof fahrerImDienst === 'function' && fahrerImDienst().length)) punkte.push({ art: 'rot', text: wartendLief.length + ' Lieferung' + (wartendLief.length > 1 ? 'en' : '') + ' offen, kein Fahrer im Dienst' });
+  else if (fe && fe.noetig) punkte.push({ art: 'ge', text: 'Zweiter Fahrer nötig · ' + fe.wartend + ' Lieferungen warten' });
+  if (!s.leiter && (s.imDienst || offen.length)) punkte.push({ art: 'ge', text: 'Niemand an der Kasse eingestempelt, keine Schichtleitung' });
+  var ohne = s.besetzung.ohne || 0;
+  if (ohne) punkte.push({ art: '', text: ohne + ' im Dienst ohne Position' });
+  if (kl && kl.auslastung > 95) punkte.push({ art: 'ge', text: 'Küche am Anschlag (' + kl.auslastung + ' %)' });
+  MG.db.zeiten.filter(function (z) { return !z.ende && jetzt() - z.start > 14 * 3600000; }).forEach(function (z) {
+    var m = mitarbeiterVon(z.mitarbeiter);
+    punkte.push({ art: 'ge', text: (m ? m.name : 'Jemand') + ' ist seit ' + datum(z.start) + ' ' + uhr(z.start) + ' eingestempelt, vermutlich Ausstempeln vergessen' });
+  });
+
+  return {
+    offen: offen.length, imLaden: imLaden.length,
+    neu: offen.filter(function (b) { return b.status === 'neu'; }).length,
+    produktion: offen.filter(function (b) { return b.status === 'produktion'; }).length,
+    bereit: offen.filter(function (b) { return b.status === 'bereit'; }).length,
+    unterwegs: offen.filter(function (b) { return b.status === 'unterwegs'; }).length,
+    fertig: heuteB.filter(function (b) { return ['geliefert', 'abgeholt', 'fertig'].indexOf(b.status) >= 0; }).length,
+    spaet: spaet, wartenSchnitt: alter.length ? Math.round(summe(alter, function (x) { return x; }) / alter.length) : 0,
+    wartenMax: alter.length ? Math.round(Math.max.apply(null, alter)) : 0,
+    kuecheLeerMin: kl ? kl.minutenBisLeer : 0,
+    schicht: s, punkte: punkte,
+    ampel: punkte.some(function (p) { return p.art === 'rot'; }) ? 'rot' : punkte.some(function (p) { return p.art === 'ge'; }) ? 'ge' : 'gr'
+  };
+}
+
+/** Lagekarte für Handy und Backoffice — gleiche Darstellung überall */
+function lageAnzeige(o) {
+  o = o || {};
+  var l = betriebsLage();
+  var farbe = { rot: 'var(--rot)', ge: 'var(--ge)', gr: 'var(--gr)' };
+  var k = el('div', { class: (o.klasse || 'karte') + ' lageKarte', style: { borderLeft: '4px solid ' + farbe[l.ampel] } });
+  k.appendChild(el('div', { class: 'reihe', style: { gap: '8px', alignItems: 'center', marginBottom: '8px' } }, [
+    el('h3', { style: { margin: '0', flex: '1' }, text: o.titel || 'Lage jetzt' }),
+    el('span', { class: 'pill ' + l.ampel, text: l.ampel === 'gr' ? 'läuft' : l.ampel === 'ge' ? 'achten' : 'hakt' })
+  ]));
+  function zahlKasten(w, t, art) {
+    return el('div', { style: { flex: '1 1 0', minWidth: '62px', textAlign: 'center', padding: '8px 4px', borderRadius: '10px', background: 'var(--bg3)' } }, [
+      el('b', { style: { display: 'block', fontSize: '22px', color: art ? farbe[art] : '' }, text: String(w) }),
+      el('span', { class: 'klein', text: t })
+    ]);
+  }
+  k.appendChild(el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } }, [
+    zahlKasten(l.offen, 'offen'),
+    zahlKasten(l.wartenSchnitt + ' Min', 'Ø Wartezeit', l.wartenSchnitt > 35 ? 'rot' : l.wartenSchnitt > 25 ? 'ge' : ''),
+    zahlKasten(l.spaet.length, 'zu spät', l.spaet.length ? 'rot' : ''),
+    zahlKasten(l.schicht.imDienst, 'im Dienst')
+  ]));
+  if (l.punkte.length) {
+    l.punkte.forEach(function (p) {
+      k.appendChild(el('div', { class: 'klein', style: { padding: '3px 0', color: p.art ? farbe[p.art] : '' }, text: p.text }));
+    });
+  } else {
+    k.appendChild(el('div', { class: 'klein', text: 'Nichts hakt. ' + l.fertig + ' Bestellungen heute fertig.' }));
+  }
+  k.appendChild(el('div', { class: 'klein', style: { marginTop: '8px' }, text:
+    'In Arbeit ' + (l.neu + l.produktion) + ' · bereit ' + l.bereit + ' · unterwegs ' + l.unterwegs +
+    (l.kuecheLeerMin ? ' · Küche in ca. ' + l.kuecheLeerMin + ' Min leer' : '') }));
+  l.spaet.slice(0, 3).forEach(function (b) {
+    k.appendChild(el('div', { class: 'klein', style: { color: 'var(--rot)' }, text:
+      '#' + (b.tagesNr || b.nr) + ' · ' + (b.art === 'lieferung' ? 'Lieferung' : 'Abholung') + ' · ' + Math.round((jetzt() - b.zugesagt) / 60000) + ' Min über der Zusage' }));
+  });
+
+  var s = l.schicht;
+  var team = el('div', { style: { marginTop: '10px', borderTop: '1px solid var(--bg3)', paddingTop: '8px' } });
+  team.appendChild(el('div', { class: 'wertZeile', style: { display: 'flex', justifyContent: 'space-between', padding: '3px 0' } }, [
+    el('span', { text: 'Schichtleitung' }), el('b', { text: s.leiter ? s.leiter.name + ' · seit ' + uhr(s.leiter.seit) : 'niemand an der Kasse' })
+  ]));
+  team.appendChild(el('div', { class: 'wertZeile', style: { display: 'flex', justifyContent: 'space-between', padding: '3px 0' } }, [
+    el('span', { text: 'Fahrer' }), el('b', { text: s.fahrer ? s.fahrer + ' · ' + s.fahrerNamen.map(function (n) { return n.split(' ')[0]; }).join(', ') : 'keiner' })
+  ]));
+  s.leute.forEach(function (x) {
+    team.appendChild(el('div', { class: 'klein', style: { display: 'flex', justifyContent: 'space-between', padding: '2px 0' } }, [
+      el('span', { text: x.name }), el('span', { text: (x.position ? positionText(x.position).split(' · ')[0] : 'ohne Position') + ' · seit ' + uhr(x.seit) })
+    ]));
+  });
+  if (!s.leute.length) team.appendChild(el('div', { class: 'klein', text: 'Niemand eingestempelt.' }));
+  k.appendChild(team);
+  return k;
+}
 
 /* ==== kern/14d_diagramm.js ==== */
 /* ============================================================
@@ -8846,14 +9163,23 @@ function anmeldungReparieren() {
 function rolleDesMitarbeiters(m) {
   return (MG.db.rollen || []).filter(function (r) { return r.k === m.rolle; })[0] || null;
 }
+/**
+ * Backoffice und Verwaltung: nur der Inhaber (Administrator) und die Filialleitung.
+ * Feste Regel (Sebastian 16.11.2026) — gilt unabhängig davon, was unter
+ * Rollen & Rechte für andere Rollen eingestellt ist.
+ */
+var BACKOFFICE_ROLLEN = ['administrator', 'filialleitung'];
+function backofficeErlaubt(m) {
+  return !!m && m.aktiv !== false && BACKOFFICE_ROLLEN.indexOf(m.rolle) >= 0 && !!rolleDesMitarbeiters(m);
+}
 /** Darf diese Rolle die Anwendung überhaupt öffnen? */
 function darfApp(m, app) {
   var r = rolleDesMitarbeiters(m);
   if (!r) return false;
+  if (app === 'backoffice') return backofficeErlaubt(m);
   if (r.rechte === 'alle') return true;
   if (app === 'kasse' || app === 'telefon') return !!r.kasse;
   if (app === 'team') return !!r.app;
-  if (app === 'backoffice') return !!r.backoffice;
   return true;
 }
 function anmeldenMitPin(pin) {
@@ -8873,6 +9199,8 @@ function sitzungHerstellen() {
   var s = Sitzung.lies();
   if (!s.mitarbeiter) return null;
   var m = MG.db.mitarbeiter.filter(function (x) { return x.id === s.mitarbeiter && x.aktiv; })[0];
+  /* Eine gespeicherte Sitzung gilt nur, solange die Freigabe für diese Anwendung besteht */
+  if (m && MG.app && !darfApp(m, MG.app.k)) { m = null; delete s.mitarbeiter; Sitzung.schreib(s); }
   MG.ich = m || null;
   return MG.ich;
 }
@@ -9069,7 +9397,6 @@ function vollbild() {
   if (document.fullscreenElement) { document.exitFullscreen(); return; }
   if (e.requestFullscreen) e.requestFullscreen().catch(function () { });
 }
-
 
 /* ==== kern/17_konfig.js ==== */
 /* ============================================================
