@@ -4565,6 +4565,9 @@ function fahrerKassiert(b, art) {
   b.zahlung.art = art === 'karte' ? 'karte' : 'bar';
   b.zahlung.beimFahrer = true;
   b.zahlung.zeit = jetzt();
+  b.zahlung.bezahltAm = b.zahlung.zeit;
+  b.zahlung.bestaetigtVon = MG.ich ? MG.ich.name : (mitarbeiterVon(b.fahrer) || { name: '' }).name;
+  if (b.zahlung.klaerung) { b.zahlung.klaerung.erledigt = jetzt(); if (typeof kundeProblemZuBonEntfernen === 'function') kundeProblemZuBonEntfernen(b, 'nicht bezahlt'); }
   if (art !== 'karte') {
     MG.db.kasseStand = Math.round((MG.db.kasseStand + betrag) * 100) / 100;
     MG.db.kassenbuch.unshift({ id: id('kb'), zeit: jetzt(), art: 'Einnahme', text: 'Lieferung ' + b.nr + ' (Fahrer, bar)', betrag: betrag, stand: MG.db.kasseStand });
@@ -4572,6 +4575,93 @@ function fahrerKassiert(b, art) {
   chronik('geld', 'Bon ' + b.nr + ' beim Kunden kassiert — ' + eur(betrag) + ' ' + (art === 'karte' ? 'Karte am Handy' : 'bar'), b.nr);
   sichern();
   return betrag;
+}
+
+/* ---------- Bezahlung offen (Sebastian 16.11.2026) ----------
+   Überall, wo eine Bestellung steht, rot „Bezahlung offen“, solange
+   zahlung.bezahlt nicht true ist. Online bezahlt: art 'online', bezahlt true.
+   Von den KI-Agenten (Telefon, WhatsApp): vorOrt true, art bar/karte, bezahlt false. */
+function zahlungOffen(b) {
+  if (!b || b.status === 'storniert' || b.status === 'entwurf') return false;
+  if (b.zahlung && b.zahlung.bezahlt === true) return false;
+  return ((b.summe && b.summe.zuZahlen) || 0) > 0;
+}
+var ZAHL_OFFEN_STIL = 'display:inline-block;background:var(--rot);color:#fff;font-weight:800;border-radius:6px;padding:2px 8px;font-size:12px;line-height:1.4;white-space:nowrap;letter-spacing:0';
+/** Rote Marke als Element (o.betrag: Betrag dazuschreiben) — null, wenn bezahlt */
+function zahlOffenMarke(b, o) {
+  if (!zahlungOffen(b)) return null;
+  o = o || {};
+  var s = el('span', { class: 'zahlOffen', text: 'Bezahlung offen' + (o.betrag ? ' · ' + eur(b.summe.zuZahlen) : '') });
+  s.setAttribute('style', ZAHL_OFFEN_STIL + (o.stil ? ';' + o.stil : ''));
+  return s;
+}
+/** Dieselbe Marke als HTML für Tabellen */
+function zahlOffenHtml(b, betrag) {
+  return zahlungOffen(b) ? ' <span class="zahlOffen" style="' + ZAHL_OFFEN_STIL + '">Bezahlung offen' + (betrag ? ' · ' + eur(b.summe.zuZahlen) : '') + '</span>' : '';
+}
+
+/** Zugestellte Lieferungen eines Fahrers, deren Bezahlung noch niemand bestätigt hat */
+function zahlungenUnbestaetigt(fahrerId) {
+  return MG.db.bestellungen.filter(function (b) {
+    return b.fahrer === fahrerId && b.art === 'lieferung' && zahlungOffen(b) &&
+      (fahrStand(b) === 'zugestellt' || b.status === 'geliefert') && !(b.zahlung && b.zahlung.klaerung);
+  });
+}
+/** Darf der Fahrer eine neue Tour starten? Erst jede offene Zahlung abhaken. */
+function tourFreigabe(fahrerId) {
+  var offen = zahlungenUnbestaetigt(fahrerId);
+  return { ok: !offen.length, offen: offen };
+}
+/** Fahrer: „war nicht bezahlt“ — geht an die Schichtleitung, die Tour darf weiter */
+function zahlungNichtErhalten(b, notiz) {
+  b.zahlung = b.zahlung || {};
+  var wer = MG.ich ? MG.ich.name : '';
+  var leiter = typeof schichtleiter === 'function' ? schichtleiter() : null;
+  b.zahlung.klaerung = { von: wer, zeit: jetzt(), notiz: notiz || '', an: leiter ? leiter.name : '' };
+  /* Beim Kunden hinterlegen — zählt für seine Stufe (Achtung, Nur Vorkasse, Gesperrt) */
+  if (typeof kundeFuerBestellung === 'function') {
+    var kd = kundeFuerBestellung(b);
+    if (kd) { var pr = kundeProblemEintragen(kd, 'nicht bezahlt', notiz, b); pr.auto = true; }
+  }
+  chronik('warnung', 'Bon ' + b.nr + ': Zahlung beim Kunden NICHT erhalten (' + eur(b.summe.zuZahlen) + ') — gemeldet von ' + wer +
+    (leiter ? ' an ' + leiter.name : '') + (notiz ? ': ' + notiz : ''), b.nr);
+  sichern();
+}
+/** Bezahlung bestätigen (Ausgabe, Dispatch, Klärung) — bar geht ins Kassenbuch */
+function zahlungBestaetigen(b, art, wo) {
+  var betrag = b.summe.zuZahlen;
+  b.zahlung = b.zahlung || {};
+  b.zahlung.bezahlt = true;
+  b.zahlung.art = art === 'karte' ? 'karte' : 'bar';
+  b.zahlung.zeit = b.zahlung.bezahltAm = jetzt();
+  b.zahlung.bestaetigtVon = MG.ich ? MG.ich.name : (wo || '');
+  if (b.zahlung.klaerung) { b.zahlung.klaerung.erledigt = jetzt(); if (typeof kundeProblemZuBonEntfernen === 'function') kundeProblemZuBonEntfernen(b, 'nicht bezahlt'); }
+  if (b.zahlung.art === 'bar') {
+    MG.db.kasseStand = Math.round((MG.db.kasseStand + betrag) * 100) / 100;
+    MG.db.kassenbuch.unshift({ id: id('kb'), zeit: jetzt(), art: 'Einnahme', text: 'Bon ' + b.nr + ' (' + (wo || 'bar') + ')', betrag: betrag, stand: MG.db.kasseStand });
+  }
+  chronik('geld', 'Bon ' + b.nr + ' bezahlt bestätigt — ' + eur(betrag) + ' ' + (b.zahlung.art === 'karte' ? 'Karte' : 'bar') + (wo ? ' (' + wo + ')' : ''), b.nr);
+  sichern();
+}
+/** Vor der Übergabe: ist noch etwas offen, erst „bezahlt bar“ oder „bezahlt Karte“ */
+function zahlungVorUebergabe(b, dann, wo) {
+  if (!zahlungOffen(b)) { dann(); return; }
+  dialog({
+    titel: 'Bezahlung offen', klasse: 'schmal',
+    inhalt: el('div', null, [
+      el('div', { style: { fontSize: '26px', fontWeight: '900', color: 'var(--rot)', margin: '2px 0 6px' }, text: eur(b.summe.zuZahlen) }),
+      el('div', { text: '#' + (b.tagesNr || b.nr) + (b.kundeDaten && b.kundeDaten.name ? ' · ' + b.kundeDaten.name : '') + ' ist noch nicht bezahlt. Erst kassieren, dann übergeben.' })
+    ]),
+    knoepfe: [
+      { text: 'Abbrechen' },
+      { text: 'Bezahlt Karte', tun: function () { zahlungBestaetigen(b, 'karte', wo); dann(); } },
+      { text: 'Bezahlt bar', art: 'p', tun: function () { zahlungBestaetigen(b, 'bar', wo); dann(); } }
+    ]
+  });
+}
+/** Offene Klärungen für Schichtleitung und Leitung */
+function zahlungKlaerungen() {
+  return MG.db.bestellungen.filter(function (b) { return b.zahlung && b.zahlung.klaerung && !b.zahlung.klaerung.erledigt && zahlungOffen(b); });
 }
 
 /* ---------- Standort ----------
@@ -6380,9 +6470,9 @@ function positionVon(m) {
   var z = m ? laufendeZeit(m) : null;
   return z && z.position ? z.position : null;
 }
-/** Inhaber und Filialleitung: dürfen jede Position nehmen und sehen das Backoffice */
+/** Leitung (Inhaber, Geschäftsführung, Filialleitung — nach Rolle): jede Position, Backoffice, Wechseln */
 function istLeitung(m) {
-  return !!m && (m.rolle === 'administrator' || m.rolle === 'filialleitung');
+  return !!m && BACKOFFICE_ROLLEN.indexOf(m.rolle) >= 0;
 }
 /** Welche Positionen jemand wählen kann: nach seinen Stationen, Leitung alle */
 function positionenFuer(m) {
@@ -6520,6 +6610,9 @@ function betriebsLage() {
     var m = mitarbeiterVon(z.mitarbeiter);
     punkte.push({ art: 'ge', text: (m ? m.name : 'Jemand') + ' ist seit ' + datum(z.start) + ' ' + uhr(z.start) + ' eingestempelt, vermutlich Ausstempeln vergessen' });
   });
+  if (typeof zahlungKlaerungen === 'function') zahlungKlaerungen().forEach(function (b) {
+    punkte.push({ art: 'rot', text: '#' + (b.tagesNr || b.nr) + ' geliefert, aber nicht bezahlt (' + eur(b.summe.zuZahlen) + ') · gemeldet von ' + (b.zahlung.klaerung.von || 'Fahrer') });
+  });
 
   return {
     offen: offen.length, imLaden: imLaden.length,
@@ -6589,6 +6682,298 @@ function lageAnzeige(o) {
   if (!s.leute.length) team.appendChild(el('div', { class: 'klein', text: 'Niemand eingestempelt.' }));
   k.appendChild(team);
   return k;
+}
+
+/* ---------- Kundenbewertung: Probleme und Stufen (Sebastian 16.11.2026) ----------
+   Jedes Problem mit einem Kunden wird hinterlegt (kunde.probleme: {datum, grund, von, notiz, bon}).
+   Eintragen darf jeder Mitarbeiter, löschen nur Schichtleitung, Filialleitung und Inhaber.
+   Stufen nach Anzahl: 0 nichts · 1–2 gelb „Achtung“ · 3 rot „Nur Vorkasse“ · ab 4 schwarz „Gesperrt“.
+   Handschalter kunde.nurVorkasse / kunde.gesperrt = true heben die Stufe an (false = automatisch);
+   herabsetzen geht, indem die Leitung Einträge löscht. kunde.stufe hält das Ergebnis für die
+   Edge Function `bestellen` bereit (Kunde über die letzten 9 Ziffern der Telefonnummer). */
+var PROBLEM_GRUENDE = ['nicht bezahlt', 'nicht abgeholt', 'nicht angetroffen', 'unfreundlich', 'falsche Angaben', 'Sonstiges'];
+
+function darfKundeBewerten(m) {
+  return !!m && (istLeitung(m) || istSchichtleiter(m) || m.rolle === 'schichtleitung');
+}
+function telefonSchluessel(t) { return String(t || '').replace(/\D/g, '').slice(-9); }
+var KundenIndex = { zeit: 0, n: -1, nachTel: {} };
+function kundeNachTelefon(t) {
+  var s = telefonSchluessel(t);
+  if (s.length < 6) return null;
+  if (KundenIndex.n !== MG.db.kunden.length || jetzt() - KundenIndex.zeit > 3000) {
+    KundenIndex = { zeit: jetzt(), n: MG.db.kunden.length, nachTel: {} };
+    MG.db.kunden.forEach(function (x) { var k9 = telefonSchluessel(x.telefon); if (k9.length >= 6 && !KundenIndex.nachTel[k9]) KundenIndex.nachTel[k9] = x; });
+  }
+  return KundenIndex.nachTel[s] || null;
+}
+function kundeZuBestellung(b) {
+  if (!b) return null;
+  if (b.kunde) { var k = MG.db.kunden.filter(function (x) { return x.id === b.kunde; })[0]; if (k) return k; }
+  return kundeNachTelefon(b.kundeDaten && b.kundeDaten.telefon);
+}
+
+function kundeProbleme(k) { return k && Array.isArray(k.probleme) ? k.probleme : []; }
+/** Stufe: ok · achtung · vorkasse · gesperrt */
+function kundeStufe(k) {
+  var n = kundeProbleme(k).length;
+  var s = 'ok';
+  if (k && (k.gesperrt === true || n >= 4)) s = 'gesperrt';
+  else if (k && (k.nurVorkasse === true || n >= 3)) s = 'vorkasse';
+  else if (n >= 1) s = 'achtung';
+  var text = s === 'gesperrt' ? 'Gesperrt' : s === 'vorkasse' ? 'Nur Vorkasse' : s === 'achtung' ? 'Achtung: ' + n + ' Problem' + (n > 1 ? 'e' : '') : '';
+  return { k: s, n: n, text: text, hand: !!(k && ((s === 'gesperrt' && k.gesperrt === true) || (s === 'vorkasse' && k.nurVorkasse === true))) };
+}
+var STUFE_STIL = {
+  achtung: 'background:var(--ge);color:#141414',
+  vorkasse: 'background:var(--rot);color:#fff',
+  gesperrt: 'background:#000;color:#fff;box-shadow:inset 0 0 0 1px #fff'
+};
+function kundeStufeStil(s) {
+  return 'display:inline-block;font-weight:800;border-radius:6px;padding:2px 8px;font-size:12px;line-height:1.4;white-space:nowrap;' + (STUFE_STIL[s] || '');
+}
+/** Marke für Bon, Bestellkarte und Kundenliste — null, wenn nichts vorliegt */
+function kundeMarke(k, o) {
+  var s = kundeStufe(k);
+  if (s.k === 'ok') return null;
+  var e = el('span', { class: 'kundeStufe ' + s.k, text: s.text, title: kundeProbleme(k).map(function (p) { return p.grund; }).join(', ') });
+  e.setAttribute('style', kundeStufeStil(s.k) + (o && o.stil ? ';' + o.stil : ''));
+  return e;
+}
+function kundeMarkeHtml(k) {
+  var s = kundeStufe(k);
+  return s.k === 'ok' ? '' : ' <span class="kundeStufe ' + s.k + '" style="' + kundeStufeStil(s.k) + '">' + esc(s.text) + '</span>';
+}
+/** Alle Marken einer Bestellung: Bezahlung offen und Kundenstufe */
+function bonMarken(b, o) {
+  var z = typeof zahlOffenMarke === 'function' ? zahlOffenMarke(b, o) : null;
+  var k = kundeMarke(kundeZuBestellung(b));
+  if (!z && !k) return null;
+  if (!z || !k) { if (o && o.stil && k && !z) k.setAttribute('style', k.getAttribute('style') + ';' + o.stil); return z || k; }
+  return el('span', { style: { display: 'inline-flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' } }, [z, k]);
+}
+function bonMarkenHtml(b, betrag) {
+  return (typeof zahlOffenHtml === 'function' ? zahlOffenHtml(b, betrag) : '') + kundeMarkeHtml(kundeZuBestellung(b));
+}
+
+function kundeStufeMerken(k) { k.stufe = kundeStufe(k).k; }
+/** Kunde für eine Bestellung, die noch keinen hat (z. B. von den KI-Agenten), kurz anlegen */
+function kundeFuerBestellung(b) {
+  var k = kundeZuBestellung(b);
+  if (k || !b || !b.kundeDaten || telefonSchluessel(b.kundeDaten.telefon).length < 6) return k;
+  var d = b.kundeDaten;
+  k = {
+    id: id('k'), nr: 'K' + String(naechsteNr('kunde')).padStart(4, '0'), name: d.name || 'Kunde', telefon: d.telefon,
+    strasse: d.strasse || '', plz: d.plz || '', ort: d.ort || '', km: d.km || 0, hinweis: d.hinweis || '',
+    punkte: 0, bestellungen: 0, umsatz: 0, ampel: 'gr', beschwerden: [], gesperrt: false, angelegt: jetzt(), werbung: false, probleme: []
+  };
+  MG.db.kunden.push(k);
+  b.kunde = k.id;
+  KundenIndex.n = -1;
+  chronik('kunde', 'Kunde ' + k.name + ' zu Bon ' + b.nr + ' angelegt (Problem gemeldet)', k.nr);
+  return k;
+}
+function kundeProblemEintragen(k, grund, notiz, b) {
+  var p = { datum: new Date().toISOString(), grund: String(grund || 'Sonstiges'), von: MG.ich ? MG.ich.name : '', notiz: String(notiz || '').trim() };
+  if (b) p.bon = b.nr;
+  k.probleme = kundeProbleme(k).concat([p]);
+  kundeStufeMerken(k);
+  var s = kundeStufe(k);
+  chronik('kunde', k.name + ': Problem „' + p.grund + '“' + (p.bon ? ' (Bon ' + p.bon + ')' : '') + ' · jetzt ' + (s.text || 'ohne Stufe') + (p.von ? ' · ' + p.von : ''), k.nr);
+  sichern();
+  return p;
+}
+function kundeProblemLoeschen(k, p) {
+  if (!darfKundeBewerten(MG.ich)) { melde('Löschen dürfen nur Schichtleitung, Filialleitung und Inhaber.', 'rot'); return false; }
+  k.probleme = kundeProbleme(k).filter(function (x) { return x !== p; });
+  kundeStufeMerken(k);
+  chronik('kunde', k.name + ': Problem „' + p.grund + '“ vom ' + datum(Date.parse(p.datum)) + ' gelöscht von ' + (MG.ich ? MG.ich.name : ''), k.nr);
+  sichern();
+  return true;
+}
+/** Automatischer Eintrag zu einem Bon wieder raus (z. B. „doch bezahlt“) */
+function kundeProblemZuBonEntfernen(b, grund) {
+  var k = kundeZuBestellung(b);
+  if (!k) return;
+  var vorher = kundeProbleme(k).length;
+  k.probleme = kundeProbleme(k).filter(function (p) { return !(p.bon === b.nr && p.grund === grund && p.auto); });
+  if (k.probleme.length !== vorher) { kundeStufeMerken(k); chronik('kunde', k.name + ': „' + grund + '“ zu Bon ' + b.nr + ' zurückgenommen', k.nr); }
+}
+/** Handschalter (nur Leitung und Schichtleitung): true hebt an, false = automatisch */
+function kundeNurVorkasseSetzen(k, wert, notiz) {
+  var wer = MG.ich ? MG.ich.name : '';
+  k.nurVorkasse = !!wert;
+  if (notiz !== undefined) k.zahlNotiz = String(notiz || '').trim();
+  k.nurVorkasseVon = wer; k.nurVorkasseAm = jetzt();
+  kundeStufeMerken(k);
+  chronik('kunde', k.name + ': Nur Vorkasse ' + (k.nurVorkasse ? 'von Hand gesetzt' : 'auf automatisch') + (k.zahlNotiz ? ' — ' + k.zahlNotiz : '') + (wer ? ' (' + wer + ')' : ''), k.nr);
+  sichern();
+}
+function kundeGesperrtSetzen(k, wert) {
+  var wer = MG.ich ? MG.ich.name : '';
+  k.gesperrt = !!wert;
+  k.gesperrtVon = wer; k.gesperrtAm = jetzt();
+  kundeStufeMerken(k);
+  chronik('kunde', k.name + ': Sperre ' + (k.gesperrt ? 'von Hand gesetzt' : 'auf automatisch') + (wer ? ' (' + wer + ')' : ''), k.nr);
+  sichern();
+}
+/** Alte Marke (Kundenzeilen) */
+function vorkasseMarke(k) { return kundeMarke(k); }
+
+/** Problem melden — an einem Kunden (k) oder direkt an einer Bestellung (b). Darf jeder. */
+function problemDialog(k, b, dann) {
+  var inn = el('div');
+  var name = k ? k.name : (b && b.kundeDaten ? b.kundeDaten.name : '');
+  inn.appendChild(el('div', { style: { fontWeight: '800', marginBottom: '8px' }, text: (b ? '#' + (b.tagesNr || b.nr) + ' · ' : '') + (name || 'Kunde') }));
+  inn.appendChild(feld('Was war los?', 'grund', 'nicht bezahlt', { art: 'auswahl', optionen: PROBLEM_GRUENDE }));
+  inn.appendChild(feld('Kurz dazu', 'notiz', '', { platz: 'freiwillig' }));
+  dialog({
+    titel: 'Problem melden', klasse: 'schmal', inhalt: inn,
+    knoepfe: [{ text: 'Abbrechen' }, {
+      text: 'Eintragen', art: 'p', tun: function (box) {
+        var kk = k || kundeFuerBestellung(b);
+        if (!kk) { melde('Zu dieser Bestellung gibt es keinen Kunden mit Telefonnummer.', 'rot'); return false; }
+        var w = werte(box);
+        kundeProblemEintragen(kk, w.grund, w.notiz, b);
+        var s = kundeStufe(kk);
+        melde(kk.name + ': ' + (s.text || 'eingetragen'), s.k === 'gesperrt' || s.k === 'vorkasse' ? 'rot' : 'ge');
+        if (dann) dann(); else neuMalen();
+      }
+    }]
+  });
+}
+
+/** Kunde: Probleme ansehen, Handschalter setzen (Schichtleitung, Filialleitung, Inhaber) */
+function kundeVorkasseDialog(k, dann) {
+  var darf = darfKundeBewerten(MG.ich);
+  var inn = el('div');
+  var s = kundeStufe(k);
+  inn.appendChild(el('div', { class: 'reihe', style: { gap: '8px', marginBottom: '2px' } }, [el('b', { class: 'wachsen', text: k.name }), kundeMarke(k)]));
+  inn.appendChild(el('div', { class: 'klein', style: { marginBottom: '10px' }, text: (k.telefon || '') + (k.ort ? ' · ' + k.ort : '') + ' · ' + s.n + ' Problem' + (s.n === 1 ? '' : 'e') }));
+  var liste = el('div', { style: { marginBottom: '10px' } });
+  if (!s.n) liste.appendChild(el('div', { class: 'klein', text: 'Keine Probleme hinterlegt.' }));
+  kundeProbleme(k).slice().reverse().forEach(function (p) {
+    liste.appendChild(el('div', { class: 'reihe', style: { gap: '8px', padding: '6px 0', borderTop: '1px solid var(--bg3)' } }, [
+      el('div', { class: 'wachsen' }, [
+        el('div', { style: { fontWeight: '700' }, text: p.grund }),
+        el('div', { class: 'klein', text: datum(Date.parse(p.datum)) + (p.bon ? ' · Bon ' + p.bon : '') + (p.von ? ' · ' + p.von : '') + (p.notiz ? ' · ' + p.notiz : '') })
+      ]),
+      darf ? el('button', { class: 'b klein', text: 'Löschen', onclick: function () { if (kundeProblemLoeschen(k, p)) { griff.zu(); kundeVorkasseDialog(k, dann); } } }) : null
+    ]));
+  });
+  inn.appendChild(liste);
+  if (darf) {
+    inn.appendChild(el('div', { class: 'klein', style: { margin: '4px 0 6px' }, text: 'Von Hand (hebt die Stufe an, „automatisch“ zählt nur die Probleme):' }));
+    inn.appendChild(el('div', { class: 'zeile' }, [
+      feld('Nur Vorkasse', 'vorkasse', k.nurVorkasse ? 'ja' : 'nein', { art: 'auswahl', optionen: [{ v: 'nein', t: 'automatisch' }, { v: 'ja', t: 'ja, immer' }] }),
+      feld('Gesperrt', 'gesperrt', k.gesperrt ? 'ja' : 'nein', { art: 'auswahl', optionen: [{ v: 'nein', t: 'automatisch' }, { v: 'ja', t: 'ja, keine Bestellung' }] })
+    ]));
+    inn.appendChild(feld('Notiz', 'zahlNotiz', k.zahlNotiz || '', { platz: 'z. B. hat am 16.11. nicht bezahlt' }));
+  }
+  var knoepfe = [{ text: 'Schließen' }, { text: 'Problem melden', tun: function () { problemDialog(k, null, function () { kundeVorkasseDialog(k, dann); }); } }];
+  if (darf) knoepfe.push({
+    text: 'Speichern', art: 'p', tun: function (box) {
+      var w = werte(box);
+      if ((w.vorkasse === 'ja') !== (k.nurVorkasse === true) || (w.zahlNotiz || '') !== (k.zahlNotiz || '')) kundeNurVorkasseSetzen(k, w.vorkasse === 'ja', w.zahlNotiz);
+      if ((w.gesperrt === 'ja') !== (k.gesperrt === true)) kundeGesperrtSetzen(k, w.gesperrt === 'ja');
+      melde(k.name + ': ' + (kundeStufe(k).text || 'keine Auffälligkeit'), 'gr');
+      if (dann) dann(); else neuMalen();
+    }
+  });
+  var griff = dialog({ titel: 'Kunde', klasse: 'schmal', inhalt: inn, knoepfe: knoepfe });
+}
+
+/** Vor einer Bestellung mit diesem Kunden: Gesperrt nur nach Rückfrage beim Schichtleiter */
+function kundeAnnahmePruefen(k, dann) {
+  var s = kundeStufe(k);
+  if (s.k === 'ok') { dann(); return; }
+  if (s.k === 'achtung') { melde(k.name + ' · ' + s.text, 'ge'); dann(); return; }
+  var leiter = schichtleiter();
+  var gesperrt = s.k === 'gesperrt';
+  dialog({
+    titel: gesperrt ? 'Kunde gesperrt' : 'Nur Vorkasse', klasse: 'schmal',
+    inhalt: el('div', null, [
+      el('div', { style: { marginBottom: '8px' } }, [kundeMarke(k)]),
+      el('div', { text: gesperrt
+        ? k.name + ' bekommt keine Bestellung mehr (' + s.n + ' Probleme). Nur nach Rückfrage bei ' + (leiter ? leiter.name.split(' ')[0] + ' (Schichtleitung)' : 'der Schichtleitung') + '.'
+        : k.name + ' muss vorher bezahlen. Erst kassieren, dann geht die Bestellung los.' }),
+      kundeProbleme(k).length ? el('div', { class: 'klein', style: { marginTop: '6px' }, text: kundeProbleme(k).map(function (p) { return p.grund; }).join(', ') }) : null
+    ]),
+    knoepfe: gesperrt
+      ? [{ text: 'Abbrechen', art: 'p' }, { text: 'Schichtleitung hat freigegeben', tun: function () {
+        chronik('warnung', 'Gesperrter Kunde ' + k.name + ' trotzdem angenommen von ' + (MG.ich ? MG.ich.name : '') + ' nach Rückfrage' + (leiter ? ' bei ' + leiter.name : ''), k.nr);
+        dann();
+      } }]
+      : [{ text: 'Abbrechen' }, { text: 'Verstanden', art: 'p', tun: function () { dann(); } }]
+  });
+}
+
+/* ---------- Handy: nur die Randy's Pizza App (Sebastian 16.11.2026) ----------
+   Meldet sich in der Team-App ein Mitarbeiter an, der nicht zur Leitung gehört (Rolle Inhaber, Geschäftsführung, Filialleitung),
+   merkt sich dieses Handy das. Danach öffnen sich hier keine anderen Anwendungen mehr
+   (Kasse, Küche, Backoffice …) — nur nach PIN der Leitung, und dann
+   nur für diese eine Sitzung. Shop und Homepage bleiben frei. */
+var NUR_TEAM_SCHLUESSEL = 'MG_NUR_TEAM';
+var HANDY_FREIE_APPS = ['team', 'shop', 'homepage'];
+function handyNurTeam(an) {
+  if (an) Speicher.schreib(NUR_TEAM_SCHLUESSEL, '1'); else Speicher.weg(NUR_TEAM_SCHLUESSEL);
+}
+function handySperreAktiv() {
+  if (!MG.app || HANDY_FREIE_APPS.indexOf(MG.app.k) >= 0) return false;
+  if (Speicher.lies(NUR_TEAM_SCHLUESSEL) !== '1') return false;
+  try { if (sessionStorage.getItem('MG_LEITUNG_FREI_' + MG.app.k) === '1') return false; } catch (e) { }
+  return true;
+}
+function handySperreMalen(host) {
+  var s = el('div', { class: 'pinschirm' });
+  var box = el('div', { class: 'pinbox' });
+  box.appendChild(el('div', { class: 'pintitel', text: "Hier läuft nur die Randy's Pizza App" }));
+  box.appendChild(el('div', { class: 'pinhinweis', text: 'Auf diesem Handy arbeitest du in der App. Kasse, Küche und Verwaltung laufen auf den Geräten im Laden.' }));
+  box.appendChild(el('button', { class: 'b voll p', style: { margin: '10px 0 14px' }, text: "Zur Randy's Pizza App", onclick: function () { location.href = appDatei('team'); } }));
+  var leitung = pinFeld({
+    titel: 'Leitung: Inhaber, Geschäftsführung, Filialleitung', text: 'PIN zum Freigeben',
+    dann: function (m) {
+      if (!istLeitung(m)) { abmeldenPin(); melde('Freigeben darf nur die Leitung.', 'rot'); neuMalen(); return; }
+      try { sessionStorage.setItem('MG_LEITUNG_FREI_' + MG.app.k, '1'); } catch (e) { }
+      neuMalen();
+    }
+  });
+  box.appendChild(leitung);
+  s.appendChild(box);
+  host.appendChild(s);
+}
+/** Läuft die Seite als App vom Startbildschirm? Dann im selben Fenster bleiben. */
+function alsAppGestartet() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+/**
+ * Die Leitung (nach Rolle) wechselt aus der Team-App in eine andere Anwendung,
+ * ohne dort die PIN noch einmal einzugeben (Sitzung wird mitgegeben).
+ */
+function leitungWechsel(k) {
+  var m = MG.ich;
+  if (!istLeitung(m)) { melde('Wechseln darf nur die Leitung.', 'rot'); return; }
+  Speicher.schreib('MG_SITZUNG_' + k, JSON.stringify({ mitarbeiter: m.id }));
+  if (k === 'backoffice') Speicher.schreib('MG_BO_AKTIV', String(jetzt()));
+  try { sessionStorage.setItem('MG_LEITUNG_FREI_' + k, '1'); } catch (e) { }
+  location.href = appDatei(k);
+}
+var LEITUNG_APPS = [
+  ['backoffice', 'Backoffice', 'Verwaltung, Personal, Zahlen'],
+  ['kds', 'Küche', 'Küchenbildschirm'], ['vorbereitung', 'Vorbereitung', 'Salate, Dips, Beilagen'],
+  ['ausgabe', 'Ausgabe', 'Prüfen, packen, übergeben'], ['dispatch', 'Dispatch', 'Touren verteilen'],
+  ['tourwand', 'Tourmonitor', 'Fahrer und Touren'], ['abholung', 'Abholdisplay', 'Kundenanzeige'],
+  ['kasse', 'Kasse', 'Bedienen, kassieren'], ['tafel', 'Menütafel', 'Ladenwand']
+];
+function leitungAppWahl() {
+  var inn = el('div');
+  LEITUNG_APPS.forEach(function (x) {
+    inn.appendChild(el('button', {
+      class: 'b', style: { width: '100%', justifyContent: 'flex-start', flexDirection: 'column', alignItems: 'flex-start', padding: '11px 14px', marginBottom: '7px', gap: '1px' },
+      onclick: function () { leitungWechsel(x[0]); }
+    }, [el('span', { style: { fontWeight: '800' }, text: x[1] }), el('span', { class: 'klein', text: x[2] })]));
+  });
+  dialog({ titel: 'Ansehen und steuern', klasse: 'schmal', inhalt: inn, knoepfe: [{ text: 'Schließen' }] });
 }
 
 /* ==== kern/14d_diagramm.js ==== */
@@ -9031,11 +9416,11 @@ function rolleDesMitarbeiters(m) {
   return (MG.db.rollen || []).filter(function (r) { return r.k === m.rolle; })[0] || null;
 }
 /**
- * Backoffice und Verwaltung: nur der Inhaber (Administrator) und die Filialleitung.
+ * Backoffice und Verwaltung: nur Inhaber (Administrator), Geschäftsführung und Filialleitung.
  * Feste Regel (Sebastian 16.11.2026) — gilt unabhängig davon, was unter
  * Rollen & Rechte für andere Rollen eingestellt ist.
  */
-var BACKOFFICE_ROLLEN = ['administrator', 'filialleitung'];
+var BACKOFFICE_ROLLEN = ['administrator', 'geschaeftsfuehrung', 'filialleitung'];   // nach Rolle, nicht nach Namen — gilt so in jeder Filiale
 function backofficeErlaubt(m) {
   return !!m && m.aktiv !== false && BACKOFFICE_ROLLEN.indexOf(m.rolle) >= 0 && !!rolleDesMitarbeiters(m);
 }
@@ -9764,15 +10149,19 @@ function kundeWaehlen(b, dann) {
       liste.appendChild(el('button', {
         class: 'b voll', style: { justifyContent: 'flex-start', padding: '10px 12px' },
         onclick: function () {
-          b.kunde = k.id;
-          b.kundeDaten = { name: k.name, telefon: k.telefon, strasse: k.strasse, plz: k.plz, ort: k.ort, km: k.km, hinweis: k.hinweis };
-          rechne(b); d.zu(); dann();
+          var nehmen = function () {
+            b.kunde = k.id;
+            b.kundeDaten = { name: k.name, telefon: k.telefon, strasse: k.strasse, plz: k.plz, ort: k.ort, km: k.km, hinweis: k.hinweis };
+            rechne(b); d.zu(); dann();
+          };
+          if (typeof kundeAnnahmePruefen === 'function') kundeAnnahmePruefen(k, nehmen); else nehmen();
         }
       }, [
         el('span', { style: { textAlign: 'left', flex: '1' } }, [
           el('div', { style: { fontWeight: '700' }, text: k.name + (k.gesperrt ? '  ' : '') }),
           el('div', { class: 'klein', text: (k.strasse ? k.strasse + ', ' : '') + k.ort + ' · ' + zahl(k.km, 1) + ' km · ' + k.punkte + ' Punkte · ' + k.bestellungen + ' Bestellungen' })
         ]),
+        typeof kundeMarke === 'function' ? kundeMarke(k) : null,
         k.ampel !== 'gr' ? el('span', { class: 'ampel ' + k.ampel }) : null
       ]));
     });
@@ -9994,7 +10383,6 @@ function hinweisDialog(b, dann) {
     knoepfe: [{ text: 'Abbrechen' }, { text: 'Übernehmen', art: 'p', tun: function (box) { b.hinweis = werte(box).hinweis; dann(); } }]
   });
 }
-
 
 /* ==== kern/17c_assistent.js ==== */
 /* ============================================================
@@ -10426,7 +10814,11 @@ function asMenue(raum, a, wahl, kand, male, ersparnis) {
 var Lauf = { malen: null, takt: null, sekunde: null };
 
 function appStart(o) {
-  Lauf.malen = o.malen;
+  /* Auf Mitarbeiter-Handys laufen andere Anwendungen nur nach Freigabe der Leitung */
+  Lauf.malen = function (host) {
+    if (typeof handySperreAktiv === 'function' && handySperreAktiv()) { handySperreMalen(host); return; }
+    o.malen(host);
+  };
   function los() {
     verbundLaden();
     sitzungHerstellen();
@@ -10643,8 +11035,9 @@ function appWaehler() {
   var inn = el('div', { class: 'gitter g3' });
   liste.forEach(function (x) {
     if (x[0] === MG.app.k) return;
+    var alsApp = typeof alsAppGestartet === 'function' && alsAppGestartet();
     inn.appendChild(el('a', {
-      class: 'b', href: appDatei(x[0]), target: '_blank', rel: 'noopener',
+      class: 'b', href: appDatei(x[0]), target: alsApp ? null : '_blank', rel: 'noopener',
       style: { flexDirection: 'column', padding: '14px', gap: '5px', textDecoration: 'none' }
     }, [el('span', { text: x[2] })]));
   });
@@ -10679,13 +11072,13 @@ function pinSchirm(o) {
   }
 
   var fuss = el('div', { style: { marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' } });
-  fuss.appendChild(el('button', { class: 'b klein', sym: 'raster', text: 'Andere Anwendung', onclick: appWaehler }));
+  /* In der Mitarbeiter-App wird nicht gewechselt (Leitung wechselt nach der Anmeldung) */
+  if (!MG.app || MG.app.k !== 'team') fuss.appendChild(el('button', { class: 'b klein', sym: 'raster', text: 'Andere Anwendung', onclick: appWaehler }));
   fuss.appendChild(el('button', { class: 'b klein', sym: 'vollbild', text: 'Vollbild', onclick: vollbild }));
   box.appendChild(fuss);
   s.appendChild(box);
   return s;
 }
-
 
 /* ==== kern/18b_bons.js ==== */
 /* ============================================================
@@ -10951,6 +11344,8 @@ function bonKachel(b, station, o) {
   kopf.appendChild(el('span', { class: 'bkNr', text: '#' + b.tagesNr }));
   kopf.appendChild(el('span', { class: 'bkKanal k_' + b.kanal, text: (MG.db.kanaele[b.kanal] || { t: b.kanal }).t }));
   if (b.art === 'lieferung') kopf.appendChild(el('span', { class: 'bkArt', text: 'Lieferung' }));
+  var zahlOffen = bonMarken(b);
+  if (zahlOffen) kopf.appendChild(zahlOffen);
   kopf.appendChild(el('span', {
     class: 'bkZeit', 'data-lauf': b.id, 'data-station': station,
     text: minSek(st.gelaufen)
@@ -11041,6 +11436,7 @@ function bonVorschau(b) {
   k.appendChild(el('div', { class: 'bkKopf' }, [
     el('span', { class: 'bkNr', text: '#' + (b.tagesNr || '–') }),
     el('span', { class: 'bkKanal k_' + b.kanal, text: (MG.db.kanaele[b.kanal] || { t: b.kanal }).t }),
+    bonMarken(b),
     el('span', { class: 'bkZeit klein2', text: b.status === 'geplant' ? uhr(b.fertigAb) : 'wartet' })
   ]));
   var liste = el('div', { class: 'bkListe' });
@@ -11072,7 +11468,6 @@ function kachelUhren() {
     kachel.classList.toggle('gut', !ueber);
   });
 }
-
 
 /* ==== kern/18d_schieber.js ==== */
 /* ============================================================
@@ -12461,7 +12856,9 @@ function mapsSchluesselDialog(dann) {
 function kartenNotBild(o, grund) {
   var kasten = el('div', { class: 'kartenNot', style: o.hoehe ? { height: o.hoehe } : null });
   kasten.appendChild(kartenBild(o));
-  kasten.appendChild(el('div', { class: 'kartenNotBand' }, [
+  /* Den Freischalt-Hinweis sieht nur die Leitung (Backoffice), nicht Fahrer und Mitarbeiter */
+  var leitung = (MG.app && MG.app.k === 'backoffice') || (typeof istLeitung === 'function' && istLeitung(MG.ich));
+  if (leitung) kasten.appendChild(el('div', { class: 'kartenNotBand' }, [
     el('span', { text: 'Ersatzkarte — ' + grund + '.' }),
     el('button', {
       class: 'kartenNotKnopf', text: 'Google Maps freischalten',
@@ -12576,7 +12973,6 @@ function mapsLink(b) {
   return 'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
     encodeURIComponent([a.strasse, a.plz + ' ' + a.ort].filter(Boolean).join(', '));
 }
-
 
 /* ==== kern/19b_liefergebiet.js ==== */
 /* ============================================================
